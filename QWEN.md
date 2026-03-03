@@ -450,7 +450,48 @@ The following patterns are **forbidden** in this codebase:
 
 ---
 
-## 15. Quick Checklist
+## 15. Development Environment
+
+### Python Virtual Environment
+
+**Always run CLI commands with the TRACE Python environment active.**
+
+The project uses a local virtual environment at `trace/`. Before running any scripts or commands:
+
+```bash
+# Windows
+trace\Scripts\activate.bat
+
+# Unix/macOS
+source trace/bin/activate
+```
+
+**Verify the environment is active:**
+```bash
+# Your prompt should show the environment prefix
+(trace) C:\Sathwik\Georgia Tech\Masters\TRACE> python --version
+Python 3.11.x
+```
+
+**Running scripts:**
+```bash
+# Good — environment activated
+python runners/rs_run.py
+python runners/model_runner.py
+
+# Bad — may use system Python or wrong environment
+python runners/rs_run.py  # (without activating trace environment first)
+```
+
+**Installing dependencies:**
+```bash
+# Always activate the environment first, then:
+pip install -r requirements.txt
+```
+
+---
+
+## 16. Quick Checklist
 
 Before submitting code to this repository, verify:
 
@@ -466,3 +507,4 @@ Before submitting code to this repository, verify:
 - [ ] New scraper/runner added to `test_bench.py`
 - [ ] Scraper output conforms to the unified Supabase schema
 - [ ] No debug `print` statements left in code
+- [ ] TRACE virtual environment is activated before running CLI commands
