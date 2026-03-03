@@ -1,0 +1,30 @@
+# Core Data Handling
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Web Scraping & Requests
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0 # Often used by bs4 for parsing
+newspaper3k>=0.2.8 # For full article text extraction in news scraper
+
+# Reddit API
+praw>=7.7.0
+
+# Bluesky API (AT Protocol Client)
+atproto>=0.0.45 # Or the latest stable version available
+
+# Supabase Client
+supabase>=2.4.0
+
+# Machine Learning & Transformers (FinBERT)
+transformers>=4.35.0
+torch>=2.0.0 # Or 'torch torchvision torchaudio' depending on your system/CUDA setup
+scikit-learn>=1.3.0
+
+# Environment Variables
+python-dotenv>=1.0.0
+
+# Visualization (Optional, for analysis in model_runner.py)
+matplotlib>=3.7.0
+seaborn>=0.12.0
