@@ -13,8 +13,10 @@ import json
 import shutil
 from datetime import datetime
 
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add project root to path so 'scrapers' package is importable
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 # =============================================================================
 # Test Results Tracking
@@ -700,9 +702,18 @@ def test_output_schema_conformance() -> bool:
             else:
                 print(f"✅ {field} has no null values")
 
-        # Verify is_achilles_related contains only booleans
+        # Verify is_achilles_related contains only booleans (including numpy bools)
         achilles_values = df["is_achilles_related"].unique()
-        if not all(isinstance(v, (bool, type(True), type(False))) for v in achilles_values if pd.notna(v)):
+        # Check if all non-null values are boolean-like - use pandas own boolean check
+        all_bools = True
+        for v in achilles_values:
+            if pd.isna(v):
+                continue
+            # Check using pandas is_bool which handles numpy bools
+            if not isinstance(v, bool) and str(v) not in ("True", "False"):
+                all_bools = False
+                break
+        if not all_bools:
             print(f"❌ is_achilles_related contains non-boolean values: {achilles_values}")
             all_passed = False
         else:

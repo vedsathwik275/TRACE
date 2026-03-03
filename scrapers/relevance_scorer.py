@@ -5,7 +5,7 @@ Relevance scoring and classification for NBA Achilles injury content.
 This module contains only scoring and classification logic — no scraping, no file I/O, no network calls.
 """
 
-from reddit_config import (
+from scrapers.reddit_config import (
     KEYWORD_WEIGHTS,
     HYPER_RELEVANCE_THRESHOLD,
     TARGET_PLAYERS,
