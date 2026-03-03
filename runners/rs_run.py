@@ -1,4 +1,4 @@
-from reddit_scraper import TRACEPrawScraper
+from scrapers.reddit_scraper import TRACEPrawScraper
 import os
 from dotenv import load_dotenv
 from datetime import datetime
