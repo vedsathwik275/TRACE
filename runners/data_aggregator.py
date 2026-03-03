@@ -37,11 +37,11 @@ def load_and_aggregate_data(data_folder_path: str = 'data/'):
             df_mapped['is_achilles_related'] = df_source['text'].str.contains('achilles|achillies', case=False, na=False) | \
                                                df_source['title'].str.contains('achilles|achillies', case=False, na=False)
             df_mapped['is_quality_content'] = True # Assume quality for now
-            df_mapped['scraped_date'] = datetime.now()
+            df_mapped['uploaded_at'] = datetime.now().isoformat()
             df_mapped['text_length'] = df_mapped['text_content'].apply(lambda x: len(str(x)) if pd.notna(x) else 0)
             df_mapped['year'] = df_mapped['created_date'].dt.year
             df_mapped['month'] = df_mapped['created_date'].dt.month
-            df_mapped['year_month'] = df_mapped['created_date'].dt.to_period('M')
+            df_mapped['year_month'] = df_mapped['created_date'].dt.to_period('M').astype(str)
             # Handle engagement tiers (example logic, adjust as needed)
             median_engagement = df_mapped['engagement_score'].median()
             df_mapped['engagement_tier'] = df_mapped['engagement_score'].apply(
@@ -65,16 +65,16 @@ def load_and_aggregate_data(data_folder_path: str = 'data/'):
             df_mapped['engagement_score'] = df_source['relevance_score'] # Could be views, shares later
             df_mapped['engagement_secondary'] = 0 # Usually not in RSS
             df_mapped['relevance_score'] = df_source['relevance_score']
-            df_mapped['recovery_score'] = 'news_general' # Placeholder
+            df_mapped['recovery_phase'] = 'news_general' # Placeholder instead of recovery_score
             df_mapped['mentioned_players'] = df_source['mentioned_players'].apply(lambda x: eval(x) if isinstance(x, str) and x.startswith('[') else []) # Convert string representation back to list
-            df_mapped['is_achilles_related'] = df_source['title'].str.contains('achilles|achillies', case=False, na=False) | \
-                                               df_source['body'].str.contains('achilles|achillies', case=False, na=False)
+            df_mapped['is_achilles_related'] = df_source['title'].astype(str).str.contains('achilles|achillies', case=False, na=False) | \
+                                               df_source['body'].astype(str).str.contains('achilles|achillies', case=False, na=False)
             df_mapped['is_quality_content'] = True
-            df_mapped['scraped_date'] = pd.to_datetime(df_source['scraped_date'], errors='coerce')
+            df_mapped['uploaded_at'] = pd.to_datetime(df_source['scraped_date'], errors='coerce')
             df_mapped['text_length'] = df_mapped['text_content'].apply(lambda x: len(str(x)) if pd.notna(x) else 0)
             df_mapped['year'] = df_mapped['created_date'].dt.year
             df_mapped['month'] = df_mapped['created_date'].dt.month
-            df_mapped['year_month'] = df_mapped['created_date'].dt.to_period('M')
+            df_mapped['year_month'] = df_mapped['created_date'].dt.to_period('M').astype(str)
             # Example engagement tier logic for news
             median_relevance = df_mapped['relevance_score'].median()
             df_mapped['engagement_tier'] = df_mapped['relevance_score'].apply(
@@ -101,11 +101,11 @@ def load_and_aggregate_data(data_folder_path: str = 'data/'):
             df_mapped['mentioned_players'] = '' # Bluesky scraper didn't capture players, leave empty string or list
             df_mapped['is_achilles_related'] = df_source['text'].str.contains('achilles|achillies', case=False, na=False)
             df_mapped['is_quality_content'] = True
-            df_mapped['scraped_date'] = datetime.now() # Or add scraped_date column to bluesky scraper
+            df_mapped['uploaded_at'] = datetime.now().isoformat() # Use uploaded_at instead of scraped_date
             df_mapped['text_length'] = df_mapped['text_content'].apply(lambda x: len(str(x)) if pd.notna(x) else 0)
             df_mapped['year'] = df_mapped['created_date'].dt.year
             df_mapped['month'] = df_mapped['created_date'].dt.month
-            df_mapped['year_month'] = df_mapped['created_date'].dt.to_period('M')
+            df_mapped['year_month'] = df_mapped['created_date'].dt.to_period('M').astype(str)
             # Example engagement tier logic for Bluesky
             median_engagement = df_mapped['engagement_score'].median()
             df_mapped['engagement_tier'] = df_mapped['engagement_score'].apply(
@@ -143,7 +143,8 @@ def load_and_aggregate_data(data_folder_path: str = 'data/'):
         'recovery_phase': 'general',
         'engagement_tier': 'none',
         'text_content': '',
-        'mentioned_players': '[]' # Default to empty JSON array string
+        'mentioned_players': '[]', # Default to empty JSON array string
+        'uploaded_at': datetime.now().isoformat()
     })
 
     # 4. Ensure boolean columns are correctly typed
@@ -154,6 +155,9 @@ def load_and_aggregate_data(data_folder_path: str = 'data/'):
 
     # Save the unified dataframe
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    # Ensure path has trailing slash
+    if not data_folder_path.endswith('/'):
+        data_folder_path += '/'
     output_filename = f'{data_folder_path}trace_unified_data_{timestamp}.csv'
     unified_df.to_csv(output_filename, index=False)
     print(f"\n💾 Unified data saved to: {output_filename}")

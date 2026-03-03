@@ -18,11 +18,12 @@ class TRACESupabaseUploader:
     def prepare_dataframe_for_upload(self, df: pd.DataFrame):
         """Prepare dataframe for Supabase upload."""
         import numpy as np
+        import math
         print("\n🛠️ Preparing dataframe for Supabase...")
         df_upload = df.copy()
 
         # =========================================================================
-        # STEP 1: Clean Infinity values (keep NaN for now)
+        # STEP 1: Clean Infinity values
         # =========================================================================
         print("🧹 Cleaning Infinity values...")
         df_upload = df_upload.replace([np.inf, -np.inf], np.nan)
@@ -33,43 +34,72 @@ class TRACESupabaseUploader:
         print("📝 Converting complex objects to JSON strings...")
         for col in df_upload.columns:
             if df_upload[col].dtype == 'object':
-                # Check if the column contains lists or dicts
                 sample_val = df_upload[col].dropna().iloc[0] if not df_upload[col].dropna().empty else None
                 if isinstance(sample_val, (list, dict)):
                     print(f"  Converting column '{col}' to JSON string...")
                     df_upload[col] = df_upload[col].apply(lambda x: json.dumps(x) if pd.notnull(x) else None)
 
         # =========================================================================
-        # STEP 3: Ensure integer columns are proper integers (handle NaN -> 0)
+        # STEP 3: Convert datetime columns to ISO format strings (handle NaT)
         # =========================================================================
-        integer_like_columns = [
-            'score', 'num_comments', 'like_count', 'repost_count', 'reply_count',
-            'total_relevance_score', 'comments_extracted', 'total_comment_words'
+        print("📅 Converting datetime columns to ISO format...")
+        datetime_columns = df_upload.select_dtypes(include=['datetime64', 'datetimetz']).columns
+        for col in datetime_columns:
+            print(f"  Converting column '{col}' to ISO format...")
+            df_upload[col] = df_upload[col].apply(
+                lambda x: x.isoformat() if pd.notnull(x) and hasattr(x, 'isoformat') else None
+            )
+
+        # Handle Period columns
+        print("  Checking for period columns...")
+        period_columns = [col for col in df_upload.columns if str(df_upload[col].dtype) == 'period']
+        for col in period_columns:
+            print(f"  Converting period column '{col}' to ISO format...")
+            df_upload[col] = df_upload[col].apply(
+                lambda x: x.to_timestamp().isoformat() if pd.notnull(x) else None
+            )
+
+        # =========================================================================
+        # STEP 4: Convert integer columns - handle float -> int conversion
+        # =========================================================================
+        print("🔢 Converting integer columns...")
+        integer_columns = [
+            'year', 'month', 'text_length', 'engagement_score', 'engagement_secondary',
+            'num_comments_extracted', 'total_comment_words', 'num_replies_extracted',
+            'total_reply_words', 'body_word_count'
         ]
-        print("🔢 Converting integer-like columns...")
-        for col in integer_like_columns:
+        for col in integer_columns:
             if col in df_upload.columns:
-                # First, ensure it's numeric, coercing errors to NaN
-                df_upload[col] = pd.to_numeric(df_upload[col], errors='coerce')
-                # Fill NaN with 0
-                df_upload[col] = df_upload[col].fillna(0)
-                # Convert to proper Python int
+                df_upload[col] = pd.to_numeric(df_upload[col], errors='coerce').fillna(0)
                 df_upload[col] = df_upload[col].astype(int)
 
         # =========================================================================
-        # STEP 4: Clean remaining NaN in numeric columns (floats)
+        # STEP 5: Convert ALL float columns - replace NaN/Inf with None for JSON compatibility
         # =========================================================================
-        numeric_columns = df_upload.select_dtypes(include=[np.number]).columns
-        df_upload[numeric_columns] = df_upload[numeric_columns].fillna(0)
+        print("📊 Converting ALL float columns (NaN -> None)...")
+        float_columns = df_upload.select_dtypes(include=['float64', 'float32', 'float']).columns
+        for col in float_columns:
+            print(f"  Cleaning float column '{col}'...")
+            df_upload[col] = df_upload[col].apply(
+                lambda x: None if (pd.isna(x) or (isinstance(x, float) and math.isinf(x))) else float(x)
+            )
 
         # =========================================================================
-        # STEP 5: Clean object columns (strings) - Replace NaN with empty string or None
+        # STEP 6: Convert boolean columns
         # =========================================================================
+        print("🔲 Converting boolean columns...")
+        boolean_columns = ['is_achilles_related', 'is_quality_content', 'fetch_success']
+        for col in boolean_columns:
+            if col in df_upload.columns:
+                df_upload[col] = df_upload[col].fillna(False).astype(bool)
+
+        # =========================================================================
+        # STEP 7: Clean ALL remaining object columns - Replace NaN with None
+        # =========================================================================
+        print("🧹 Cleaning ALL object columns (NaN -> None)...")
         object_columns = df_upload.select_dtypes(include=['object']).columns
-        # For strings, replacing NaN with empty string is often fine, but None might be preferred for DB
-        df_upload[object_columns] = df_upload[object_columns].fillna('')
-        # Or replace with None if the database column allows it and you prefer NULL
-        # df_upload[object_columns] = df_upload[object_columns].where(pd.notnull(df_upload[object_columns]), None)
+        for col in object_columns:
+            df_upload[col] = df_upload[col].apply(lambda x: None if pd.isna(x) else x)
 
         print("✅ Data preparation complete.")
         return df_upload

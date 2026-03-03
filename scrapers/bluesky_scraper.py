@@ -6,7 +6,7 @@ import time
 
 class TRACEBlueskyScraper:
     def __init__(self):
-        self.base_url = "https://public.api.bsky.app/xrpc"
+        self.base_url = "https://bsky.social/xrpc"
         self.session = requests.Session()
         self.access_token = None
         self.did = None # Decentralized ID

@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from datetime import datetime
 from supabase import create_client, Client
-from kaggle_secrets import UserSecretsClient # Or use python-dotenv if not on Kaggle
 import os
 from dotenv import load_dotenv # Import for loading .env
 import warnings

@@ -131,9 +131,18 @@ try:
         print("\n--- Testing Reddit Scraping (Small Test) ---")
         try:
             # Run a very small scrape to test functionality
-            small_df = scraper.scrape_subreddit('nba', 'hot', limit=5, include_comments=False)
+            small_list = scraper.scrape_subreddit('nba', 'hot', limit=5, include_comments=False)
+            # Convert list to DataFrame
+            small_df = pd.DataFrame(small_list)
             test_results["reddit_scrape"] = len(small_df) > 0
             print_test_result("Reddit Scrape", test_results["reddit_scrape"], f"Retrieved {len(small_df)} posts")
+            
+            # Save Reddit data for aggregation test
+            if test_results["reddit_scrape"]:
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                reddit_file = f'{data_folder}/trace_reddit_data_{timestamp}.csv'
+                small_df.to_csv(reddit_file, index=False)
+                print(f"  💾 Saved Reddit data to: {reddit_file}")
         except Exception as e:
             print_test_result("Reddit Scrape", False, f"Exception: {e}")
             traceback.print_exc()
@@ -147,6 +156,13 @@ try:
         articles = news_scraper.run_trace_scrape(fetch_full_articles=False) # Fetch full bodies is slow
         test_results["news_scrape"] = len(articles) > 0
         print_test_result("News Scrape", test_results["news_scrape"], f"Retrieved {len(articles)} articles")
+        
+        # Save News data for aggregation test
+        if test_results["news_scrape"]:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            news_file = f'{data_folder}/trace_news_data_{timestamp}.csv'
+            news_df = news_scraper.save_for_trace()
+            print(f"  💾 Saved News data to: {news_file}")
     except Exception as e:
         print_test_result("News Scrape", False, f"Exception: {e}")
         traceback.print_exc()
@@ -161,6 +177,13 @@ try:
         df_bluesky_test = bluesky_scraper.run_comprehensive_collection(posts_per_query=5, fetch_replies=False)
         test_results["bluesky_scrape"] = not df_bluesky_test.empty
         print_test_result("Bluesky Scrape", test_results["bluesky_scrape"], f"Retrieved {len(df_bluesky_test)} posts")
+        
+        # Save Bluesky data for aggregation test
+        if test_results["bluesky_scrape"]:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            bluesky_file = f'{data_folder}/trace_bluesky_data_{timestamp}.csv'
+            df_bluesky_test.to_csv(bluesky_file, index=False)
+            print(f"  💾 Saved Bluesky data to: {bluesky_file}")
     except Exception as e:
         print_test_result("Bluesky Scrape", False, f"Exception: {e}")
         traceback.print_exc()
@@ -206,7 +229,7 @@ try:
             sb_client = create_client(sb_url, sb_key)
             # Fetch recently added records (within last hour for this test)
             one_hour_ago = (datetime.now() - timedelta(hours=1)).isoformat()
-            response = sb_client.table('trace_sentiment_data').select('*').gte('scraped_date', one_hour_ago).execute()
+            response = sb_client.table('trace_sentiment_data').select('*').gte('uploaded_at', one_hour_ago).execute()
             fetched_df = pd.DataFrame(response.data)
             test_results["fetch_from_supabase"] = not fetched_df.empty
             print_test_result("Fetch from Supabase", test_results["fetch_from_supabase"], f"Fetched {len(fetched_df)} recent records")
@@ -305,5 +328,23 @@ if not test_results["run_finbert"]:
     print("  - Check if the FinBERT model can be loaded and applied to text data.")
 if not test_results["upload_model_results"]:
     print("  - Verify Supabase URL/key and that the 'trace_sentiment_results' table exists.")
+
+# --- 6. CLEANUP DATA FOLDER ---
+print("\n" + "=" * 60)
+print("🧹 Cleaning up data folder...")
+print("=" * 60)
+try:
+    import shutil
+    for filename in os.listdir(data_folder):
+        filepath = os.path.join(data_folder, filename)
+        try:
+            if os.path.isfile(filepath):
+                os.remove(filepath)
+                print(f"  🗑️ Deleted: {filename}")
+        except Exception as e:
+            print(f"  ⚠️ Error deleting {filename}: {e}")
+    print("✅ Data folder cleaned up successfully!")
+except Exception as e:
+    print(f"❌ Error during cleanup: {e}")
 
 print("\nTest bench execution complete.")
