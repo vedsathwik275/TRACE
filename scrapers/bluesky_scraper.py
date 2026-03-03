@@ -3,6 +3,7 @@ import requests
 import pandas as pd
 from datetime import datetime
 import time
+import json
 
 class TRACEBlueskyScraper:
     def __init__(self):
@@ -62,24 +63,37 @@ class TRACEBlueskyScraper:
             return {}
 
     def process_post(self, post_record, fetch_replies=False, max_replies=10):
-        """Process a single post record."""
+        """Process a single post record and output standardized Supabase schema."""
         # Extract core post data
         uri = post_record['uri']
         cid = post_record['cid']
         author = post_record['author']
         record = post_record['record']
-        
+
         text = record.get('text', '')
         created_at = record.get('createdAt', '')
         reply_count = record.get('replyCount', 0)
         repost_count = record.get('repostCount', 0)
         like_count = record.get('likeCount', 0)
+
+        # Parse created_at to ISO format and extract year/month
+        try:
+            created_dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+            created_date_iso = created_dt.isoformat()
+            year = created_dt.year
+            month = created_dt.month
+            year_month = created_dt.strftime('%Y-%m')
+        except:
+            created_dt = datetime.now()
+            created_date_iso = created_dt.isoformat()
+            year = created_dt.year
+            month = created_dt.month
+            year_month = created_dt.strftime('%Y-%m')
         
         # Build combined text (post + replies if fetched)
         combined_text = text
-        
+
         # Fetch replies if requested
-        replies_text = ""
         if fetch_replies and reply_count > 0:
             thread_data = self.get_post_thread(uri)
             if 'thread' in thread_data and 'replies' in thread_data['thread']:
@@ -88,22 +102,53 @@ class TRACEBlueskyScraper:
                     reply_record = reply.get('post', {})
                     if 'record' in reply_record:
                         reply_text = reply_record['record'].get('text', '')
-                        replies_text += f"\n---Reply---\n{reply_text}\n---End Reply---\n"
+                        combined_text += f"\n---Reply---\n{reply_text}\n---End Reply---\n"
+
+        # Calculate engagement tier
+        total_engagement = like_count + repost_count
+        engagement_tier = 'high' if total_engagement > 100 else ('medium' if total_engagement > 20 else 'low')
         
-        combined_text += replies_text
+        # Check if achilles related
+        is_achilles_related = 'achilles' in text.lower() or 'achillies' in text.lower()
+        
+        # Extract mentioned players (simple keyword matching)
+        mentioned_players = []
+        player_keywords = ['LeBron', 'Curry', 'Durant', 'Giannis', 'Luka', 'Jokic', 'Embiid', 'Tatum', 'AD']
+        for player in player_keywords:
+            if player.lower() in text.lower():
+                mentioned_players.append(player)
 
         post_data = {
-            'uri': uri,
-            'cid': cid,
-            'author_handle': author['handle'],
-            'author_display_name': author.get('displayName', ''),
-            'text': text,
-            'combined_text': combined_text, # Include replies if fetched
-            'created_at': created_at,
-            'reply_count': reply_count,
-            'repost_count': repost_count,
-            'like_count': like_count,
-            'url': f"https://bsky.app/profile/{author['handle']}/post/{uri.split('/')[-1]}"
+            # === STANDARD SUPABASE SCHEMA COLUMNS ===
+            'source_platform': 'Bluesky',
+            'source_detail': 'Post Search',
+            'author': author.get('handle', 'Unknown'),
+            'url': f"https://bsky.app/profile/{author['handle']}/post/{uri.split('/')[-1]}",
+            'text_content': combined_text,
+            'created_date': created_date_iso,
+            'engagement_score': float(like_count),
+            'engagement_secondary': float(repost_count),
+            'engagement_tier': engagement_tier,
+            'relevance_score': 0.0,  # Could be calculated based on search query match
+            'recovery_phase': 'fan_discussion',
+            'mentioned_players': json.dumps(mentioned_players),
+            'is_achilles_related': is_achilles_related,
+            'is_quality_content': True,
+            'uploaded_at': datetime.now().isoformat(),
+            'text_length': len(combined_text),
+            'year': year,
+            'month': month,
+            'year_month': year_month,
+            # === BLUESKY-SPECIFIC COLUMNS ===
+            'num_replies_extracted': reply_count if fetch_replies else 0,
+            'avg_reply_likes': 0.0,  # Would need to fetch individual reply data
+            'total_reply_words': len(combined_text.split()) - len(text.split()) if fetch_replies else 0,
+            # === UNUSED COLUMNS (set to defaults) ===
+            'num_comments_extracted': 0,
+            'avg_comment_score': 0.0,
+            'total_comment_words': 0,
+            'body_word_count': 0,
+            'fetch_success': False,
         }
         return post_data
 

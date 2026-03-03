@@ -265,7 +265,12 @@ try:
             sb_client_results = create_client(sb_url, sb_key)
             # Prepare results for upload (simplified mapping)
             results_to_upload = df_with_sentiment[['id', 'sentiment_label', 'sentiment_score', 'finbert_positive', 'finbert_negative', 'finbert_neutral']].copy()
-            results_to_upload.rename(columns={'id': 'trace_data_id'}, inplace=True)
+            results_to_upload.rename(columns={
+                'id': 'trace_data_id',
+                'finbert_positive': 'sentiment_positive',
+                'finbert_negative': 'sentiment_negative',
+                'finbert_neutral': 'sentiment_neutral'
+            }, inplace=True)
             results_to_upload['finbert_model_version'] = 'ProsusAI/finbert'
             results_to_upload['analyzed_at'] = datetime.now().isoformat()
 

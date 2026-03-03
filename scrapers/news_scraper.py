@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import re
 from newspaper import Article
 import urllib.parse
+import json
 
 class TRACENewsScraper:
     def __init__(self):
@@ -98,6 +99,49 @@ class TRACENewsScraper:
             'Danilo Gallinari', 'Gallinari', 'T.J. Warren', 'Warren'
         ]
 
+    def create_standardized_article(self, title: str, url: str, source: str, pub_date_str: str) -> dict:
+        """Create a standardized article dictionary matching Supabase schema."""
+        scraped_date = datetime.now()
+        
+        # Parse pub_date - handle 'Unknown' or invalid dates gracefully
+        try:
+            pub_date = datetime.strptime(pub_date_str, '%a, %d %b %Y %H:%M:%S %Z')
+        except:
+            # Fallback to scraped_date if pub_date is invalid
+            pub_date = scraped_date
+        
+        return {
+            'source_platform': 'News',
+            'source_detail': source,
+            'author': 'N/A',
+            'url': url,
+            'text_content': title,  # Default to title, will be replaced if body is fetched
+            'created_date': pub_date.isoformat(),
+            'engagement_score': 0.0,
+            'engagement_secondary': 0.0,
+            'engagement_tier': 'low',
+            'relevance_score': 0.0,  # Will be set by caller
+            'recovery_phase': 'news_general',
+            'mentioned_players': '[]',  # Will be set by caller
+            'is_achilles_related': False,  # Will be set by caller
+            'is_quality_content': True,
+            'uploaded_at': scraped_date.isoformat(),
+            'text_length': len(title),
+            'year': pub_date.year,
+            'month': pub_date.month,
+            'year_month': pub_date.strftime('%Y-%m'),
+            # News-specific
+            'body_word_count': 0,
+            # Unused columns
+            'num_comments_extracted': 0,
+            'avg_comment_score': 0.0,
+            'total_comment_words': 0,
+            'num_replies_extracted': 0,
+            'avg_reply_likes': 0.0,
+            'total_reply_words': 0,
+            'fetch_success': False,
+        }
+
     def fetch_article_body(self, url: str, source: str):
         """Fetch the full body of an article from its URL."""
         try:
@@ -136,52 +180,40 @@ class TRACENewsScraper:
                     if title_elem and link_elem:
                         title = title_elem.get_text(strip=True)
                         article_url = link_elem.get_text(strip=True)
-                        
+
                         # Check for relevance
                         relevance_score = sum(1 for keyword in self.injury_keywords if keyword.lower() in title.lower())
-                        if relevance_score > 0: # Only process if relevant
-                            article_data = {
-                                'title': title,
-                                'url': article_url,
-                                'source': 'ESPN',
-                                'pub_date': pub_date_elem.get_text(strip=True) if pub_date_elem else 'Unknown',
-                                'mentioned_players': [],
-                                'relevance_score': relevance_score,
-                                'body': '',
-                                'body_word_count': 0,
-                                'scraped_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                            }
+                        if relevance_score > 0:
+                            pub_date_str = pub_date_elem.get_text(strip=True) if pub_date_elem else 'Unknown'
+                            article_data = self.create_standardized_article(title, article_url, 'ESPN', pub_date_str)
+                            article_data['relevance_score'] = float(relevance_score)
                             
-                            # Find mentioned players in title
-                            for player in [kw for kw in self.injury_keywords if len(kw.split()) == 1 or kw.count(' ') == 1]: # Simple check
-                                if player.lower() in title.lower() and player not in article_data['mentioned_players']:
-                                    article_data['mentioned_players'].append(player)
-
                             # Fetch full article body
+                            body_text = ''
                             if fetch_full_articles and article_url:
                                 print(f"🌐 Fetching full article from URL...")
                                 body_data = self.fetch_article_body(article_url, 'ESPN')
-                                if not body_data['fetch_success']:
-                                    print(f"🔄 Trying fallback method...")
-                                    # Fallback could involve direct requests/bs4 parsing
-                                    try:
-                                        inner_response = requests.get(article_url, headers=self.headers, timeout=10)
-                                        if inner_response.status_code == 200:
-                                            inner_soup = BeautifulSoup(inner_response.content, 'html.parser')
-                                            # This is a generic attempt; ESPN might require specific selectors
-                                            paragraphs = inner_soup.find_all('p')
-                                            fallback_body = ' '.join([p.get_text(strip=True) for p in paragraphs])
-                                            body_data['body'] = fallback_body
-                                            body_data['word_count'] = len(fallback_body.split())
-                                            body_data['fetch_success'] = True
-                                    except:
-                                         pass # If fallback fails, body remains empty
+                                body_text = body_data.get('body', '')
+                                article_data['body_word_count'] = body_data.get('word_count', 0)
+                                article_data['fetch_success'] = body_data.get('fetch_success', False)
+                            
+                            # Use body if available, otherwise use title
+                            if body_text.strip():
+                                article_data['text_content'] = body_text
+                                article_data['text_length'] = len(body_text)
+                            
+                            # Extract mentioned players
+                            mentioned_players = []
+                            for player in [kw for kw in self.injury_keywords if len(kw.split()) <= 2]:
+                                if player.lower() in title.lower():
+                                    mentioned_players.append(player)
+                            article_data['mentioned_players'] = json.dumps(mentioned_players)
+                            
+                            # Check if achilles related
+                            article_data['is_achilles_related'] = 'achilles' in title.lower() or 'achillies' in title.lower()
 
-                            article_data['body'] = body_data['body']
-                            article_data['body_word_count'] = body_data['word_count']
-
-                            # Avoid duplicates
-                            if not any(existing['title'] == title for existing in self.articles):
+                            # Avoid duplicates (check by URL)
+                            if not any(existing['url'] == article_url for existing in self.articles):
                                 self.articles.append(article_data)
                                 print(f"✅ Found: {title[:70]}...")
                             time.sleep(1) # Rate limiting
@@ -201,55 +233,42 @@ class TRACENewsScraper:
                     title_elem = item.find('title')
                     link_elem = item.find('link')
                     pub_date_elem = item.find('pubdate')
-                    
+
                     if title_elem and link_elem:
                         title = title_elem.get_text(strip=True)
                         article_url = link_elem.get_text(strip=True)
-                        
+
                         # Check for relevance
                         relevance_score = sum(1 for keyword in self.injury_keywords if keyword.lower() in title.lower())
                         if relevance_score > 0:
-                            article_data = {
-                                'title': title,
-                                'url': article_url,
-                                'source': 'CBS Sports',
-                                'pub_date': pub_date_elem.get_text(strip=True) if pub_date_elem else 'Unknown',
-                                'mentioned_players': [],
-                                'relevance_score': relevance_score,
-                                'body': '',
-                                'body_word_count': 0,
-                                'scraped_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                            }
+                            pub_date_str = pub_date_elem.get_text(strip=True) if pub_date_elem else 'Unknown'
+                            article_data = self.create_standardized_article(title, article_url, 'CBS Sports', pub_date_str)
+                            article_data['relevance_score'] = float(relevance_score)
                             
-                            # Find mentioned players in title
-                            for player in [kw for kw in self.injury_keywords if len(kw.split()) == 1 or kw.count(' ') == 1]: 
-                                if player.lower() in title.lower() and player not in article_data['mentioned_players']:
-                                    article_data['mentioned_players'].append(player)
-
                             # Fetch full article body
+                            body_text = ''
                             if fetch_full_articles and article_url:
                                 print(f"🌐 Fetching full article from URL...")
                                 body_data = self.fetch_article_body(article_url, 'CBS Sports')
-                                if not body_data['fetch_success']:
-                                    print(f"🔄 Trying fallback method...")
-                                    try:
-                                        inner_response = requests.get(article_url, headers=self.headers, timeout=10)
-                                        if inner_response.status_code == 200:
-                                            inner_soup = BeautifulSoup(inner_response.content, 'html.parser')
-                                            # Generic fallback selector
-                                            paragraphs = inner_soup.find_all('p')
-                                            fallback_body = ' '.join([p.get_text(strip=True) for p in paragraphs])
-                                            body_data['body'] = fallback_body
-                                            body_data['word_count'] = len(fallback_body.split())
-                                            body_data['fetch_success'] = True
-                                    except:
-                                         pass
+                                body_text = body_data.get('body', '')
+                                article_data['body_word_count'] = body_data.get('word_count', 0)
+                                article_data['fetch_success'] = body_data.get('fetch_success', False)
+                            
+                            # Use body if available, otherwise use title
+                            if body_text.strip():
+                                article_data['text_content'] = body_text
+                                article_data['text_length'] = len(body_text)
+                            
+                            # Extract mentioned players
+                            mentioned_players = []
+                            for player in [kw for kw in self.injury_keywords if len(kw.split()) <= 2]:
+                                if player.lower() in title.lower():
+                                    mentioned_players.append(player)
+                            article_data['mentioned_players'] = json.dumps(mentioned_players)
+                            article_data['is_achilles_related'] = 'achilles' in title.lower() or 'achillies' in title.lower()
 
-                            article_data['body'] = body_data['body']
-                            article_data['body_word_count'] = body_data['word_count']
-
-                            # Avoid duplicates
-                            if not any(existing['title'] == title for existing in self.articles):
+                            # Avoid duplicates (check by URL)
+                            if not any(existing['url'] == article_url for existing in self.articles):
                                 self.articles.append(article_data)
                                 print(f"✅ Found: {title[:70]}...")
                             time.sleep(1) # Rate limiting
@@ -269,61 +288,49 @@ class TRACENewsScraper:
                     title_elem = item.find('title')
                     link_elem = item.find('link')
                     pub_date_elem = item.find('pubdate')
-                    
+
                     if title_elem and link_elem:
                         title = title_elem.get_text(strip=True)
                         article_url = link_elem.get_text(strip=True)
-                        
+
                         # Check for relevance
                         relevance_score = sum(1 for keyword in self.injury_keywords if keyword.lower() in title.lower())
                         if relevance_score > 0:
-                            article_data = {
-                                'title': title,
-                                'url': article_url,
-                                'source': 'Bleacher Report',
-                                'pub_date': pub_date_elem.get_text(strip=True) if pub_date_elem else 'Unknown',
-                                'mentioned_players': [],
-                                'relevance_score': relevance_score,
-                                'body': '',
-                                'body_word_count': 0,
-                                'scraped_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                            }
+                            pub_date_str = pub_date_elem.get_text(strip=True) if pub_date_elem else 'Unknown'
+                            article_data = self.create_standardized_article(title, article_url, 'Bleacher Report', pub_date_str)
+                            article_data['relevance_score'] = float(relevance_score)
                             
-                            # Find mentioned players in title
-                            for player in [kw for kw in self.injury_keywords if len(kw.split()) == 1 or kw.count(' ') == 1]: 
-                                if player.lower() in title.lower() and player not in article_data['mentioned_players']:
-                                    article_data['mentioned_players'].append(player)
-
                             # Fetch full article body
+                            body_text = ''
                             if fetch_full_articles and article_url:
                                 print(f"🌐 Fetching full article from URL...")
                                 body_data = self.fetch_article_body(article_url, 'Bleacher Report')
-                                if not body_data['fetch_success']:
-                                    print(f"🔄 Trying fallback method...")
-                                    try:
-                                        inner_response = requests.get(article_url, headers=self.headers, timeout=10)
-                                        if inner_response.status_code == 200:
-                                            inner_soup = BeautifulSoup(inner_response.content, 'html.parser')
-                                            paragraphs = inner_soup.find_all('p')
-                                            fallback_body = ' '.join([p.get_text(strip=True) for p in paragraphs])
-                                            body_data['body'] = fallback_body
-                                            body_data['word_count'] = len(fallback_body.split())
-                                            body_data['fetch_success'] = True
-                                    except:
-                                         pass
+                                body_text = body_data.get('body', '')
+                                article_data['body_word_count'] = body_data.get('word_count', 0)
+                                article_data['fetch_success'] = body_data.get('fetch_success', False)
+                            
+                            # Use body if available, otherwise use title
+                            if body_text.strip():
+                                article_data['text_content'] = body_text
+                                article_data['text_length'] = len(body_text)
+                            
+                            # Extract mentioned players
+                            mentioned_players = []
+                            for player in [kw for kw in self.injury_keywords if len(kw.split()) <= 2]:
+                                if player.lower() in title.lower():
+                                    mentioned_players.append(player)
+                            article_data['mentioned_players'] = json.dumps(mentioned_players)
+                            article_data['is_achilles_related'] = 'achilles' in title.lower() or 'achillies' in title.lower()
 
-                            article_data['body'] = body_data['body']
-                            article_data['body_word_count'] = body_data['word_count']
-
-                            # Avoid duplicates
-                            if not any(existing['title'] == title for existing in self.articles):
+                            # Avoid duplicates (check by URL)
+                            if not any(existing['url'] == article_url for existing in self.articles):
                                 self.articles.append(article_data)
                                 print(f"✅ Found: {title[:70]}...")
                             time.sleep(1) # Rate limiting
         except Exception as e:
             print(f"❌ Bleacher Report RSS error: {e}")
 
-    def scrape_yahoo_sports_rss(self):
+    def scrape_yahoo_sports_rss(self, fetch_full_articles: bool = False):
         """Scrape Yahoo Sports NBA RSS feed"""
         print("🔍 Searching Yahoo Sports NBA RSS...")
         url = "https://sports.yahoo.com/nba/rss.xml"
@@ -336,39 +343,44 @@ class TRACENewsScraper:
                     title_elem = item.find('title')
                     link_elem = item.find('link')
                     pub_date_elem = item.find('pubdate')
-                    
+
                     if title_elem and link_elem:
                         title = title_elem.get_text(strip=True)
                         article_url = link_elem.get_text(strip=True)
-                        
+
                         # Check for relevance
                         relevance_score = sum(1 for keyword in self.injury_keywords if keyword.lower() in title.lower())
                         if relevance_score > 0:
-                            article_data = {
-                                'title': title,
-                                'url': article_url,
-                                'source': 'Yahoo Sports',
-                                'pub_date': pub_date_elem.get_text(strip=True) if pub_date_elem else 'Unknown',
-                                'mentioned_players': [],
-                                'relevance_score': relevance_score,
-                                'body': '', # Body fetching not implemented for Yahoo in original
-                                'body_word_count': 0,
-                                'scraped_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                            }
+                            pub_date_str = pub_date_elem.get_text(strip=True) if pub_date_elem else 'Unknown'
+                            article_data = self.create_standardized_article(title, article_url, 'Yahoo Sports', pub_date_str)
+                            article_data['relevance_score'] = float(relevance_score)
                             
-                            # Find mentioned players in title
-                            for player in [kw for kw in self.injury_keywords if len(kw.split()) == 1 or kw.count(' ') == 1]: 
-                                if player.lower() in title.lower() and player not in article_data['mentioned_players']:
-                                    article_data['mentioned_players'].append(player)
+                            # Fetch full article body (optional for Yahoo)
+                            if fetch_full_articles and article_url:
+                                body_data = self.fetch_article_body(article_url, 'Yahoo Sports')
+                                body_text = body_data.get('body', '')
+                                if body_text.strip():
+                                    article_data['text_content'] = body_text
+                                    article_data['text_length'] = len(body_text)
+                                article_data['body_word_count'] = body_data.get('word_count', 0)
+                                article_data['fetch_success'] = body_data.get('fetch_success', False)
+                            
+                            # Extract mentioned players
+                            mentioned_players = []
+                            for player in [kw for kw in self.injury_keywords if len(kw.split()) <= 2]:
+                                if player.lower() in title.lower():
+                                    mentioned_players.append(player)
+                            article_data['mentioned_players'] = json.dumps(mentioned_players)
+                            article_data['is_achilles_related'] = 'achilles' in title.lower() or 'achillies' in title.lower()
 
-                            # Avoid duplicates
-                            if not any(existing['title'] == title for existing in self.articles):
+                            # Avoid duplicates (check by URL)
+                            if not any(existing['url'] == article_url for existing in self.articles):
                                 self.articles.append(article_data)
                                 print(f"✅ Found: {title[:70]}...")
         except Exception as e:
             print(f"❌ Yahoo Sports error: {e}")
 
-    def scrape_nba_official_news(self):
+    def scrape_nba_official_news(self, fetch_full_articles: bool = False):
         """Scrape NBA.com official news"""
         print("🔍 Searching NBA.com Official News...")
         url = "https://www.nba.com/news/rss.xml"
@@ -381,39 +393,44 @@ class TRACENewsScraper:
                     title_elem = item.find('title')
                     link_elem = item.find('link')
                     pub_date_elem = item.find('pubdate')
-                    
+
                     if title_elem and link_elem:
                         title = title_elem.get_text(strip=True)
                         article_url = link_elem.get_text(strip=True)
-                        
+
                         # Check for relevance
                         relevance_score = sum(1 for keyword in self.injury_keywords if keyword.lower() in title.lower())
                         if relevance_score > 0:
-                            article_data = {
-                                'title': title,
-                                'url': article_url,
-                                'source': 'NBA.com',
-                                'pub_date': pub_date_elem.get_text(strip=True) if pub_date_elem else 'Unknown',
-                                'mentioned_players': [],
-                                'relevance_score': relevance_score,
-                                'body': '', # Body fetching not implemented for NBA.com in original
-                                'body_word_count': 0,
-                                'scraped_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                            }
+                            pub_date_str = pub_date_elem.get_text(strip=True) if pub_date_elem else 'Unknown'
+                            article_data = self.create_standardized_article(title, article_url, 'NBA.com', pub_date_str)
+                            article_data['relevance_score'] = float(relevance_score)
                             
-                            # Find mentioned players in title
-                            for player in [kw for kw in self.injury_keywords if len(kw.split()) == 1 or kw.count(' ') == 1]: 
-                                if player.lower() in title.lower() and player not in article_data['mentioned_players']:
-                                    article_data['mentioned_players'].append(player)
+                            # Fetch full article body (optional for NBA.com)
+                            if fetch_full_articles and article_url:
+                                body_data = self.fetch_article_body(article_url, 'NBA.com')
+                                body_text = body_data.get('body', '')
+                                if body_text.strip():
+                                    article_data['text_content'] = body_text
+                                    article_data['text_length'] = len(body_text)
+                                article_data['body_word_count'] = body_data.get('word_count', 0)
+                                article_data['fetch_success'] = body_data.get('fetch_success', False)
+                            
+                            # Extract mentioned players
+                            mentioned_players = []
+                            for player in [kw for kw in self.injury_keywords if len(kw.split()) <= 2]:
+                                if player.lower() in title.lower():
+                                    mentioned_players.append(player)
+                            article_data['mentioned_players'] = json.dumps(mentioned_players)
+                            article_data['is_achilles_related'] = 'achilles' in title.lower() or 'achillies' in title.lower()
 
-                            # Avoid duplicates
-                            if not any(existing['title'] == title for existing in self.articles):
+                            # Avoid duplicates (check by URL)
+                            if not any(existing['url'] == article_url for existing in self.articles):
                                 self.articles.append(article_data)
                                 print(f"✅ Found: {title[:70]}...")
         except Exception as e:
             print(f"❌ NBA.com error: {e}")
 
-    def scrape_sporting_news_rss(self):
+    def scrape_sporting_news_rss(self, fetch_full_articles: bool = False):
         """Scrape Sporting News NBA RSS feed"""
         print("🔍 Searching Sporting News NBA RSS...")
         url = "https://www.sportingnews.com/us/rss/nba"
@@ -426,33 +443,38 @@ class TRACENewsScraper:
                     title_elem = item.find('title')
                     link_elem = item.find('link')
                     pub_date_elem = item.find('pubdate')
-                    
+
                     if title_elem and link_elem:
                         title = title_elem.get_text(strip=True)
                         article_url = link_elem.get_text(strip=True)
-                        
+
                         # Check for relevance
                         relevance_score = sum(1 for keyword in self.injury_keywords if keyword.lower() in title.lower())
                         if relevance_score > 0:
-                            article_data = {
-                                'title': title,
-                                'url': article_url,
-                                'source': 'Sporting News',
-                                'pub_date': pub_date_elem.get_text(strip=True) if pub_date_elem else 'Unknown',
-                                'mentioned_players': [],
-                                'relevance_score': relevance_score,
-                                'body': '', # Body fetching not implemented for Sporting News in original
-                                'body_word_count': 0,
-                                'scraped_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                            }
+                            pub_date_str = pub_date_elem.get_text(strip=True) if pub_date_elem else 'Unknown'
+                            article_data = self.create_standardized_article(title, article_url, 'Sporting News', pub_date_str)
+                            article_data['relevance_score'] = float(relevance_score)
                             
-                            # Find mentioned players in title
-                            for player in [kw for kw in self.injury_keywords if len(kw.split()) == 1 or kw.count(' ') == 1]: 
-                                if player.lower() in title.lower() and player not in article_data['mentioned_players']:
-                                    article_data['mentioned_players'].append(player)
+                            # Fetch full article body (optional for Sporting News)
+                            if fetch_full_articles and article_url:
+                                body_data = self.fetch_article_body(article_url, 'Sporting News')
+                                body_text = body_data.get('body', '')
+                                if body_text.strip():
+                                    article_data['text_content'] = body_text
+                                    article_data['text_length'] = len(body_text)
+                                article_data['body_word_count'] = body_data.get('word_count', 0)
+                                article_data['fetch_success'] = body_data.get('fetch_success', False)
+                            
+                            # Extract mentioned players
+                            mentioned_players = []
+                            for player in [kw for kw in self.injury_keywords if len(kw.split()) <= 2]:
+                                if player.lower() in title.lower():
+                                    mentioned_players.append(player)
+                            article_data['mentioned_players'] = json.dumps(mentioned_players)
+                            article_data['is_achilles_related'] = 'achilles' in title.lower() or 'achillies' in title.lower()
 
-                            # Avoid duplicates
-                            if not any(existing['title'] == title for existing in self.articles):
+                            # Avoid duplicates (check by URL)
+                            if not any(existing['url'] == article_url for existing in self.articles):
                                 self.articles.append(article_data)
                                 print(f"✅ Found: {title[:70]}...")
         except Exception as e:
@@ -495,7 +517,7 @@ class TRACENewsScraper:
         top_relevant = df.nlargest(5, 'relevance_score')
         print(f"\n📋 Top 5 Most Relevant Articles:")
         for _, row in top_relevant.iterrows():
-            print(f"  [{row['relevance_score']:.1f}] ({row['source']}) {row['title'][:80]}...")
+            print(f"  [{row['relevance_score']:.1f}] ({row['source_detail']}) {row['text_content'][:80]}...")
 
     def save_for_trace(self):
         """Save collected articles to a CSV file."""

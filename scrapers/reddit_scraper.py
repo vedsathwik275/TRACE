@@ -7,6 +7,7 @@ import seaborn as sns
 from datetime import datetime, timedelta
 import time
 import re
+import json
 from typing import List, Dict, Optional
 import warnings
 warnings.filterwarnings('ignore')
@@ -421,29 +422,50 @@ class TRACEPrawScraper:
                 if player not in mentioned_players:
                     mentioned_players.append(player)
 
+        # Parse created_date to ISO format for Supabase compatibility
+        created_dt = datetime.fromtimestamp(submission.created_utc)
+        created_date_iso = created_dt.isoformat()
+        year = created_dt.year
+        month = created_dt.month
+        year_month = created_dt.strftime('%Y-%m')
+        
+        # Calculate engagement tier
+        score = submission.score or 0
+        num_comments = submission.num_comments or 0
+        total_engagement = score + num_comments
+        engagement_tier = 'high' if total_engagement > 100 else ('medium' if total_engagement > 20 else 'low')
+
         post_data = {
-            'post_id': submission.id,
-            'title': title,
-            'text': text,
-            'combined_text': combined_text, # Include combined text
-            'author': submission.author.name if submission.author else '[deleted]',
-            'subreddit': submission.subreddit.display_name,
-            'score': submission.score,
-            'upvote_ratio': submission.upvote_ratio,
-            'num_comments': submission.num_comments,
-            'created_utc': submission.created_utc,
-            'created_date': datetime.fromtimestamp(submission.created_utc).strftime('%Y-%m-%d %H:%M:%S'),
-            'permalink': f"https://reddit.com{submission.permalink}",
-            'url': submission.url,
-            'title_relevance_score': title_relevance,
-            'text_relevance_score': text_relevance,
-            'total_relevance_score': title_relevance + text_relevance,
+            # === STANDARD SUPABASE SCHEMA COLUMNS ===
+            'source_platform': 'Reddit',
+            'source_detail': submission.subreddit.display_name,
+            'author': submission.author.name if submission.author else 'Unknown',
+            'url': f"https://reddit.com{submission.permalink}",
+            'text_content': combined_text,
+            'created_date': created_date_iso,
+            'engagement_score': float(score),
+            'engagement_secondary': float(num_comments),
+            'engagement_tier': engagement_tier,
+            'relevance_score': float(title_relevance + text_relevance),
             'recovery_phase': recovery_phase,
-            'mentioned_players': mentioned_players,
-            # Comment-specific fields
-            'comments_extracted': 0,
-            'avg_comment_score': 0,
-            'total_comment_words': 0
+            'mentioned_players': json.dumps(mentioned_players),  # JSON string for Supabase
+            'is_achilles_related': bool('achilles' in combined_text.lower() or 'achillies' in combined_text.lower()),
+            'is_quality_content': True,
+            'uploaded_at': datetime.now().isoformat(),
+            'text_length': len(combined_text),
+            'year': year,
+            'month': month,
+            'year_month': year_month,
+            # === REDDIT-SPECIFIC COLUMNS ===
+            'num_comments_extracted': 0,
+            'avg_comment_score': 0.0,
+            'total_comment_words': 0,
+            # === UNUSED COLUMNS (set to defaults) ===
+            'num_replies_extracted': 0,
+            'avg_reply_likes': 0.0,
+            'total_reply_words': 0,
+            'body_word_count': 0,
+            'fetch_success': False,
         }
 
         # Process comments if enabled
@@ -451,23 +473,24 @@ class TRACEPrawScraper:
             try:
                 submission.comments.replace_more(limit=0) # Flatten comment tree
                 comments = submission.comments.list()[:comment_limit]
-                
+
                 comment_texts = []
                 comment_scores = []
                 total_words = 0
-                
+
                 for comment in comments:
                     comment_text = comment.body
                     comment_texts.append(comment_text)
                     comment_scores.append(comment.score)
                     total_words += len(comment_text.split())
-                
-                post_data['comments_extracted'] = len(comment_texts)
-                post_data['avg_comment_score'] = sum(comment_scores) / len(comment_scores) if comment_scores else 0
+
+                post_data['num_comments_extracted'] = len(comment_texts)
+                post_data['avg_comment_score'] = float(sum(comment_scores) / len(comment_scores)) if comment_scores else 0.0
                 post_data['total_comment_words'] = total_words
-                
-                # Append comments to combined text for broader sentiment context
-                post_data['combined_text'] = f"{post_data['combined_text']}\n\nComments:\n" + "\n".join(comment_texts)
+
+                # Append comments to text_content for broader sentiment context
+                post_data['text_content'] = f"{post_data['text_content']}\n\nComments:\n" + "\n".join(comment_texts)
+                post_data['text_length'] = len(post_data['text_content'])
 
             except Exception as e:
                 print(f"⚠️ Error processing comments for post {submission.id}: {e}")
@@ -530,7 +553,7 @@ class TRACEPrawScraper:
                 post_data = self.process_submission(submission, include_comments, comment_limit)
                 
                 # Only add if it meets minimum relevance threshold
-                if post_data['total_relevance_score'] > 0: # Adjust threshold as needed
+                if post_data['relevance_score'] > 0:  # Adjust threshold as needed
                     results.append(post_data)
                     relevant_count += 1
                     
@@ -667,13 +690,13 @@ class TRACEPrawScraper:
         # 5. Convert to DataFrame and clean (same as working version)
         if all_data:
             df = pd.DataFrame(all_data)
-            # Remove duplicates
-            df = df.drop_duplicates(subset=['post_id'])
+            # Remove duplicates (by URL since post_id is not in Supabase schema)
+            df = df.drop_duplicates(subset=['url'])
             # Sort by relevance
-            df = df.sort_values('total_relevance_score', ascending=False)
+            df = df.sort_values('relevance_score', ascending=False)
             print(f"\n📊 COMPREHENSIVEING COMPLETE ")
             print(f"   • Total unique posts collected: {len(df)}")
-            print(f"   • Average relevance score: {df['total_relevance_score'].mean():.2f}")
+            print(f"   • Average relevance score: {df['relevance_score'].mean():.2f}")
             print(f"   • Date range: {df['created_date'].min()} to {df['created_date'].max()}")
             return df
         else:
@@ -695,16 +718,23 @@ class TRACEPrawScraper:
         print(f"📈 Dataset Overview:")
         print(f"Total posts: {len(df)}")
         print(f"Date range: {df['created_date'].min()} to {df['created_date'].max()}")
-        print(f"Average relevance score: {df['total_relevance_score'].mean():.2f}")
+        print(f"Average relevance score: {df['relevance_score'].mean():.2f}")
         print(f"Top 5 subreddits by volume:")
-        print(df['subreddit'].value_counts().head())
+        print(df['source_detail'].value_counts().head())
 
         # Recovery phase distribution
         print(f"\n🔄 Recovery Phases:")
         print(df['recovery_phase'].value_counts())
 
-        # Top mentioned players
-        all_players = [player for sublist in df['mentioned_players'] for player in sublist]
+        # Top mentioned players (now JSON string, need to parse)
+        import json
+        all_players = []
+        for json_str in df['mentioned_players']:
+            try:
+                players = json.loads(json_str)
+                all_players.extend(players)
+            except:
+                pass
         if all_players:
             print(f"\n👤 Top Mentioned Players:")
             player_counts = pd.Series(all_players).value_counts()
@@ -712,9 +742,9 @@ class TRACEPrawScraper:
 
         # Sample of high-relevance posts
         print(f"\n📋 High-Relevance Posts (Sample):")
-        high_rel_df = df[df['total_relevance_score'] >= df['total_relevance_score'].quantile(0.8)].head(10)
+        high_rel_df = df[df['relevance_score'] >= df['relevance_score'].quantile(0.8)].head(10)
         for idx, row in high_rel_df.iterrows():
-             print(f"  {row['total_relevance_score']:.1f}| r/{row['subreddit']}| {row['recovery_phase']}| {row['title'][:60]}...")
+             print(f"  {row['relevance_score']:.1f}| r/{row['source_detail']}| {row['recovery_phase']}| {row['text_content'][:60]}...")
 
         print(f"\n✅ Comprehensive analysis complete!")
         print(f"🎯 Dataset ready for FinBERT sentiment analysis!")

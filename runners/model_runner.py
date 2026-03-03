@@ -67,29 +67,47 @@ def fetch_data_from_supabase(supabase_client: Client, table_name: str = 'trace_s
 def run_finbert_sentiment_analysis(df: pd.DataFrame):
     """Run FinBERT sentiment analysis on the text content."""
     print("\n🤖 Running FinBERT sentiment analysis...")
-    
+
     # Load FinBERT model
     model_name = "ProsusAI/finbert"
     tokenizer = BertTokenizer.from_pretrained(model_name)
     model = BertForSequenceClassification.from_pretrained(model_name)
 
     # Create a HuggingFace pipeline
-    sentiment_pipeline = pipeline("sentiment-analysis", 
-                                  model=model, 
+    sentiment_pipeline = pipeline("sentiment-analysis",
+                                  model=model,
                                   tokenizer=tokenizer,
-                                  return_all_scores=True)
+                                  return_all_scores=True,
+                                  truncation=True,  # Enable truncation
+                                  max_length=512)   # Max sequence length
 
     # Function to run analysis on a single text
     def analyze_single_text(text):
         if pd.isna(text) or text.strip() == "":
             return {"label": "neutral", "score": 0.0, "positive": 0.0, "negative": 0.0, "neutral": 1.0}
-        
+
         try:
-            results = sentiment_pipeline(text)[0]
+            # Truncate text if too long (FinBERT max is 512 tokens)
+            # Approximate: 1 token ≈ 4 characters, so 512 tokens ≈ 2000 chars
+            if len(text) > 2000:
+                text = text[:2000] + "..."  # Truncate with ellipsis
+            
+            results = sentiment_pipeline(text)
+            
+            # Handle different result formats
+            if isinstance(results, list) and len(results) > 0:
+                result_item = results[0]
+                # If result_item is a list of dicts (return_all_scores=True)
+                if isinstance(result_item, list):
+                    results = result_item
+                # If result_item is a dict with label/score
+                elif isinstance(result_item, dict):
+                    results = [result_item]
+            
             pos_score = next((r['score'] for r in results if r['label'].lower() == 'positive'), 0.0)
             neg_score = next((r['score'] for r in results if r['label'].lower() == 'negative'), 0.0)
             neu_score = next((r['score'] for r in results if r['label'].lower() == 'neutral'), 0.0)
-            
+
             max_score = max(pos_score, neg_score, neu_score)
             if pos_score == max_score:
                 overall_label = "positive"
@@ -97,7 +115,7 @@ def run_finbert_sentiment_analysis(df: pd.DataFrame):
                 overall_label = "negative"
             else:
                 overall_label = "neutral"
-                
+
             return {
                 "label": overall_label,
                 "score": max_score,
@@ -167,9 +185,9 @@ def upload_model_results_to_supabase(supabase_client: Client, df: pd.DataFrame, 
             'trace_data_id': row.get('id', None), # Assuming 'id' is the primary key from the source table
             'sentiment_label': row['sentiment_label'],
             'sentiment_score': float(row['sentiment_score']),
-            'finbert_positive': float(row['finbert_positive']),
-            'finbert_negative': float(row['finbert_negative']),
-            'finbert_neutral': float(row['finbert_neutral']),
+            'sentiment_positive': float(row['finbert_positive']),
+            'sentiment_negative': float(row['finbert_negative']),
+            'sentiment_neutral': float(row['finbert_neutral']),
             'finbert_model_version': 'ProsusAI/finbert', # Version used
             'analyzed_at': datetime.now().isoformat() # Timestamp of analysis
         }
