@@ -184,8 +184,11 @@ class TRACENewsScraperV2:
         pub_datetime = self.fetcher.parse_pub_date(pub_date_str)
 
         # Check if source has full article fetching enabled
+        # For Google News sources, always attempt full article fetch
         fetch_full = False
-        if source_name in NEWS_SOURCES:
+        if source_name.startswith("Google News"):
+            fetch_full = True
+        elif source_name in NEWS_SOURCES:
             fetch_full = NEWS_SOURCES[source_name].get("fetch_full_article", False)
 
         # Attempt to fetch full article
@@ -546,6 +549,11 @@ class TRACENewsScraperV2:
 
             # Rate limiting: sleep between queries
             time.sleep(NEWS_SCRAPER_SETTINGS["request_delay_seconds"])
+
+        # Final checkpoint save for all records
+        if all_records:
+            self.checkpoint.save_records_batch(all_records)
+            print(f"💾 Checkpointed {len(all_records)} total records")
 
         # Print stage summary
         print(f"\n📊 Stage 2 Summary: {records_collected} total records from Google News RSS")
