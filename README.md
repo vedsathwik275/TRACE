@@ -13,10 +13,12 @@ A multi-source NBA injury sentiment analysis pipeline that collects data from Re
 
 TRACE tracks public sentiment around NBA player injuries by scraping social media and news sources, then applying financial-domain sentiment analysis (FinBERT) to classify posts and articles as positive, negative, or neutral. The system is designed to surface trends in fan and media perception of player recovery timelines.
 
+The project now includes **V2 scrapers** for Reddit, News, and Bluesky — purpose-built for historical Achilles injury data collection across 15 target NBA players. The V2 scrapers add checkpointing (resumable runs), multi-phase collection strategies, and a modular relevance scoring engine.
+
 **What it does:**
-- Scrapes Reddit posts and comments from all 30 NBA team subreddits
-- Scrapes Bluesky posts using injury-related search queries
-- Scrapes RSS feeds from ESPN, CBS Sports, Bleacher Report, Yahoo Sports, NBA.com, and Sporting News
+- Scrapes Reddit posts and comments from NBA subreddits (V1: all 30 team subreddits; V2: targeted historical Achilles queries)
+- Scrapes Bluesky posts using injury-related search queries with cursor-based pagination
+- Scrapes RSS feeds from ESPN, CBS Sports, Yahoo Sports, NY Post, RotoWire, and more (V2 adds Google News RSS historical search)
 - Aggregates all sources into a unified schema
 - Uploads data to Supabase PostgreSQL
 - Runs FinBERT sentiment classification on all text content
@@ -61,15 +63,21 @@ TRACE tracks public sentiment around NBA player injuries by scraping social medi
 
 ## Features
 
-- **Multi-source scraping** — Reddit (30 NBA subreddits), Bluesky, 6 major sports news RSS feeds
+- **Multi-source scraping** — Reddit (30 NBA subreddits), Bluesky, and 10+ sports news RSS feeds
+- **V2 historical scrapers** — Targeted collection for 15 NBA players with confirmed Achilles injuries
+- **Checkpointing** — V2 scrapers save progress to disk and resume safely after interruption
+- **Multi-phase collection** — V2 scrapers run three distinct search stages per source for maximum coverage
+- **Modular relevance scoring** — `TRACERelevanceScorer` with keyword weighting, player mention detection, and recovery phase classification
+- **Google News RSS search** — V2 news scraper queries Google News RSS per-player for historical coverage (2015–present)
 - **Standardized schema** — 27-column unified data model across all sources
 - **Injury keyword tracking** — 300+ injury-related terms for relevance scoring
-- **Player mention extraction** — Automatically identifies discussed NBA players
-- **Achilles-specific analytics** — Dedicated flag for achilles tendon injury content
+- **Player mention extraction** — Automatically identifies 15 target NBA players and their known aliases
+- **Achilles-specific analytics** — Dedicated flag and recovery phase classifier for Achilles tendon injury content
 - **Engagement metrics** — Captures upvotes, comments, likes, reposts, and engagement tier
 - **FinBERT sentiment analysis** — Positive / Negative / Neutral classification with confidence scores
 - **Supabase integration** — Cloud PostgreSQL storage with batch upload and fallback handling
 - **Full-text article extraction** — Fetches article bodies via newspaper3k for deep content
+- **V2 validation scripts** — 10-check QA suite for each V2 scraper output
 
 ---
 
@@ -80,22 +88,41 @@ TRACE/
 ├── README.md                       # This file
 ├── QWEN.md                         # Python coding standards for this project
 ├── requirements.txt                # Python dependencies
-├── test_bench.py                   # Full pipeline validation test
 ├── scrapers/                       # Data collection modules
-│   ├── reddit_scraper.py           # TRACEPrawScraper — Reddit via PRAW
-│   ├── news_scraper.py             # TRACENewsScraper — RSS news feeds
-│   ├── bluesky_scraper.py          # TRACEBlueskyScraper — Bluesky AT Protocol
-│   └── supabase_uploader.py        # TRACESupabaseUploader — database upload
-└── runners/                        # Orchestration and execution scripts
-    ├── rs_run.py                   # Run Reddit scraper
-    ├── ns_run.py                   # Run News scraper
-    ├── bs_run.py                   # Run Bluesky scraper
-    ├── su_run.py                   # Upload unified data to Supabase
-    ├── data_aggregator.py          # Merge all source CSVs into one
-    └── model_runner.py             # FinBERT inference + results upload
+│   ├── reddit_scraper.py           # TRACEPrawScraper — Reddit via PRAW (V1)
+│   ├── reddit_scraper_v2.py        # TRACERedditScraperV2 — historical Achilles scraper
+│   ├── reddit_config.py            # Config: TARGET_PLAYERS, queries, subreddits, date ranges
+│   ├── news_scraper.py             # TRACENewsScraper — RSS news feeds (V1)
+│   ├── news_scraper_v2.py          # TRACENewsScraperV2 — RSS + Google News RSS scraper
+│   ├── news_config.py              # Config: NEWS_SOURCES, relevance thresholds
+│   ├── bluesky_scraper.py          # TRACEBlueskyScraper — Bluesky AT Protocol (V1)
+│   ├── bluesky_scraper_v2.py       # TRACEBlueskyScraperV2 — paginated historical scraper
+│   ├── supabase_uploader.py        # TRACESupabaseUploader — database upload
+│   ├── relevance_scorer.py         # TRACERelevanceScorer — keyword scoring and classification
+│   ├── checkpoint_manager.py       # TRACECheckpointManager — progress persistence
+│   └── article_fetcher.py          # TRACEArticleFetcher — RSS and full article fetching
+├── runners/                        # Orchestration and execution scripts
+│   ├── rs_run.py                   # Run Reddit scraper (V1)
+│   ├── rs_run_v2.py                # Run Reddit scraper V2
+│   ├── ns_run.py                   # Run News scraper (V1)
+│   ├── ns_run_v2.py                # Run News scraper V2 (RSS + Google News)
+│   ├── bs_run.py                   # Run Bluesky scraper (V1)
+│   ├── bs_run_v2.py                # Run Bluesky scraper V2
+│   ├── gn_run.py                   # Run Google News RSS scraper only
+│   ├── su_run.py                   # Upload unified data to Supabase
+│   ├── data_aggregator.py          # Merge all source CSVs into one
+│   ├── model_runner.py             # FinBERT inference + results upload
+│   ├── validate_reddit_v2.py       # 10-check QA validation for Reddit V2 output
+│   ├── validate_news_v2.py         # 10-check QA validation for News V2 output
+│   └── validate_bluesky_v2.py      # 10-check QA validation for Bluesky V2 output
+└── tests/                          # Test suite
+    ├── test_bench.py               # Full pipeline validation test
+    ├── test_reddit.py              # Reddit scraper unit tests
+    ├── test_news.py                # News scraper unit tests
+    └── test_google_news_rss.py     # Google News RSS tests
 ```
 
-> **Note:** The `data/` directory (CSV output) and `.env` file are excluded from version control via `.gitignore`.
+> **Note:** The `data/` directory (CSV output and checkpoint files) and `.env` file are excluded from version control via `.gitignore`.
 
 ---
 
@@ -156,12 +183,44 @@ SUPABASE_KEY=your_supabase_key
 
 ## Usage
 
+### V2 Scrapers (Recommended — Historical Achilles Data)
+
+The V2 scrapers perform targeted historical collection for 15 NBA players with confirmed Achilles injuries. They support checkpointing, so long-running collections can be safely interrupted and resumed.
+
+```bash
+# Collect historical Reddit data (multi-phase: player queries, achilles queries, hot/top sweeps)
+python runners/rs_run_v2.py
+
+# Collect historical news articles (RSS feeds + Google News RSS)
+python runners/ns_run_v2.py
+python runners/ns_run_v2.py --debug   # Print all filtered items for inspection
+
+# Collect Google News RSS only (standalone historical search)
+python runners/gn_run.py
+python runners/gn_run.py --debug
+
+# Collect historical Bluesky posts (multi-phase: player queries, achilles queries, broader queries)
+python runners/bs_run_v2.py
+```
+
+After collection, validate V2 output quality before uploading:
+
+```bash
+python runners/validate_reddit_v2.py
+python runners/validate_news_v2.py
+python runners/validate_bluesky_v2.py
+```
+
+Each validation script runs 10 checks covering record count, Achilles rate, relevance thresholds, temporal coverage, player coverage, nulls, duplicates, schema completeness, date format, and recovery phases.
+
+### V1 Scrapers (Standard Pipeline)
+
 Run each step in order for a complete pipeline execution:
 
 ```bash
 # Step 1: Collect data from all sources (can be run in parallel)
 python runners/rs_run.py          # Reddit — scrapes all 30 NBA team subreddits
-python runners/ns_run.py          # News   — scrapes 6 sports RSS feeds
+python runners/ns_run.py          # News   — scrapes sports RSS feeds
 python runners/bs_run.py          # Bluesky — searches injury-related queries
 
 # Step 2: Aggregate all source CSVs into one unified file
@@ -176,7 +235,7 @@ python runners/model_runner.py
 
 **Validate the full pipeline:**
 ```bash
-python test_bench.py
+python tests/test_bench.py
 ```
 
 ### Output Files
@@ -188,7 +247,71 @@ Each runner writes timestamped CSV files to the `data/` directory:
 | `rs_run.py` | `data/trace_reddit_data_YYYYMMDD_HHMMSS.csv` |
 | `ns_run.py` | `data/trace_news_data_YYYYMMDD_HHMMSS.csv` |
 | `bs_run.py` | `data/trace_bluesky_data_YYYYMMDD_HHMMSS.csv` |
+| `rs_run_v2.py` | `data/trace_reddit_v2_data_YYYYMMDD_HHMMSS.csv` |
+| `ns_run_v2.py` | `data/trace_news_v2_data_YYYYMMDD_HHMMSS.csv` |
+| `bs_run_v2.py` | `data/trace_bluesky_v2_data_YYYYMMDD_HHMMSS.csv` |
+| `gn_run.py` | `data/trace_news_gnews_YYYYMMDD_HHMMSS.csv` |
 | `data_aggregator.py` | `data/trace_unified_data_YYYYMMDD_HHMMSS.csv` |
+
+V2 scrapers also write checkpoint files to `data/checkpoints/`, `data/news_checkpoints/`, and `data/bluesky_checkpoints/` for resumability.
+
+---
+
+## V2 Scraper Details
+
+### Target Players
+
+The V2 scrapers collect content specifically related to 15 NBA players with confirmed Achilles injuries:
+
+| Player | Injury Date |
+|---|---|
+| Kevin Durant | 2019-05-13 |
+| Klay Thompson | 2019-06-13 |
+| DeMarcus Cousins | 2018-01-26 |
+| John Wall | 2019-01-25 |
+| Wesley Matthews | 2015-03-05 |
+| Rudy Gay | 2017-01-28 |
+| Rodney Hood | 2019-04-20 |
+| Jeremy Lin | 2017-08-26 |
+| Brandon Jennings | 2015-11-24 |
+| Danilo Gallinari | 2021-08-07 |
+| Bogdan Bogdanovic | 2020-10-19 |
+| Chandler Parsons | 2018-01-04 |
+| Brook Lopez | 2018-03-29 |
+| Marcus Smart | 2022-05-27 |
+| Gordon Hayward | 2017-10-17 |
+
+### Collection Phases
+
+Each V2 scraper runs three collection stages:
+
+**Reddit V2 (`TRACERedditScraperV2`):**
+- Stage 1: Player-specific historical searches (`"{player} achilles"`) across primary subreddits with date-range filtering
+- Stage 2: Achilles-specific queries across all subreddits (primary + team + specialty)
+- Stage 3: Hot and top post sweeps from primary subreddits (past year)
+
+**News V2 (`TRACENewsScraperV2`):**
+- Stage 1: RSS collection from 10+ configured sports news sources with broad relevance scoring
+- Stage 2: Google News RSS historical search — 4 queries per player (injury, surgery, return, rehab) + yearly generic queries (2015–2024)
+- Stage 3: Gap-filling analysis — reports years with thin coverage (<100 records)
+
+**Bluesky V2 (`TRACEBlueskyScraperV2`):**
+- Stage 1: Player-specific searches (`"{player} achilles"`, `"{player} achilles injury"`) with cursor pagination
+- Stage 2: Achilles-specific queries from the shared query list
+- Stage 3: Broader NBA injury queries (`"NBA injury"`, `"NBA sidelined"`, `"NBA injury report"`, etc.)
+
+### Relevance Scoring
+
+`TRACERelevanceScorer` computes a numeric relevance score for each item using:
+- **Achilles terms** (highest weight): `achilles`, `achilles tear`, `achilles rupture`, etc.
+- **Player name / alias matches**: +5.0 per matched player
+- **Player + injury word combo bonus**: +3.0 when both are present
+- **Broad injury terms**: +0.5 each
+- **NBA context terms**: +0.25 each
+
+RSS-specific scoring (`compute_score_rss`) uses simplified weights tuned for short titles and descriptions. Items below the relevance threshold are filtered before any full-article fetching occurs.
+
+Recovery phases detected: `immediate_post_injury`, `surgery_treatment`, `rehabilitation`, `return_anticipation`, `general`.
 
 ---
 
@@ -208,7 +331,7 @@ All scrapers output data conforming to this unified 27-column schema:
 | `engagement_secondary` | INT | Secondary engagement (comments, reposts) |
 | `engagement_tier` | TEXT | `high`, `medium`, or `low` |
 | `relevance_score` | FLOAT | Count of matched injury-related keywords |
-| `recovery_phase` | TEXT | Content category (e.g., `fan_discussion`, `news_general`) |
+| `recovery_phase` | TEXT | Content category (e.g., `rehabilitation`, `return_anticipation`) |
 | `mentioned_players` | TEXT | JSON array of detected player names |
 | `is_achilles_related` | BOOL | Whether content mentions achilles injury |
 | `is_quality_content` | BOOL | Content quality flag |
@@ -254,7 +377,7 @@ Stores FinBERT model output, linked to source data:
 Run the full integration test suite with:
 
 ```bash
-python test_bench.py
+python tests/test_bench.py
 ```
 
 The test bench validates:
@@ -281,7 +404,7 @@ A final summary reports pass/fail for each component.
 1. **Branch naming:** Use descriptive branches (e.g., `feature/add-twitter-scraper`, `fix/supabase-upload-timeout`)
 2. **Commit messages:** Use the imperative mood and describe the change clearly (e.g., `"Add ESPN article body extraction"`, not `"changes"`)
 3. **Coding standards:** Follow the guidelines in [QWEN.md](./QWEN.md) — this file defines Python coding standards for this project
-4. **Tests:** Add test coverage to `test_bench.py` for any new scraper or runner component
+4. **Tests:** Add test coverage to `tests/test_bench.py` for any new scraper or runner component
 5. **Secrets:** Never commit credentials — use `.env` only
 
 ---
