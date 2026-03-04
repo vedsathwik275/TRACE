@@ -90,7 +90,62 @@ MIN_ARTICLE_WORD_COUNT: int = 50
 
 # Lower threshold for RSS feeds since descriptions are short (can re-filter with LLM in Phase 2)
 # Player name (5.0) + injury (2.0) = 7.0, so threshold of 7.0 catches player+injury combos
-RSS_RELEVANCE_THRESHOLD: float = 7.0
+RSS_RELEVANCE_THRESHOLD: float = 1.0
+
+# =============================================================================
+# BROAD INJURY AND CONTEXT TERMS
+# =============================================================================
+
+# Broad injury-related terms for general filtering
+BROAD_INJURY_TERMS: list[str] = [
+    "injury",
+    "injured",
+    "out",
+    "sidelined",
+    "surgery",
+    "torn",
+    "tear",
+    "rupture",
+    "strain",
+    "sprain",
+    "tendon",
+    "calf",
+    "ankle",
+    "knee",
+    "leg",
+    "operated",
+    "procedure",
+    "return",
+    "recovery",
+    "rehab",
+    "questionable",
+    "doubtful",
+    "inactive",
+    "missed games",
+    "missed game",
+    "medical",
+    "clearance",
+    "cleared",
+]
+
+# NBA context terms to ensure basketball relevance
+NBA_CONTEXT_TERMS: list[str] = [
+    "NBA",
+    "basketball",
+    "player",
+    "team",
+    "season",
+    "game",
+    "contract",
+    "roster",
+    "signing",
+    "trade",
+    "draft",
+    "rookie",
+    "veteran",
+    "starter",
+    "bench",
+]
 
 # =============================================================================
 # NEWS SCRAPER SETTINGS

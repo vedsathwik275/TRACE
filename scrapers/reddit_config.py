@@ -232,7 +232,7 @@ PLAYER_ALIASES: dict[str, str] = {
 # RELEVANCE THRESHOLDS
 # =============================================================================
 
-HYPER_RELEVANCE_THRESHOLD: float = 15.0
+HYPER_RELEVANCE_THRESHOLD: float = 2.0
 
 # =============================================================================
 # DATE RANGES FOR SEARCH

@@ -20,6 +20,7 @@ from scrapers.news_config import (
     PLAYER_INJURY_WINDOWS,
     MIN_ARTICLE_WORD_COUNT,
     RSS_RELEVANCE_THRESHOLD,
+    BROAD_INJURY_TERMS,
 )
 from scrapers.reddit_config import TARGET_PLAYERS, KEYWORD_WEIGHTS, HYPER_RELEVANCE_THRESHOLD
 from scrapers.article_fetcher import TRACEArticleFetcher
@@ -136,6 +137,7 @@ class TRACENewsScraperV2:
         pub_date_str: str,
         description: str = "",
         threshold: float = None,
+        is_rss_source: bool = False,
         debug_mode: bool = False,
     ) -> Optional[dict]:
         """
@@ -148,6 +150,7 @@ class TRACENewsScraperV2:
             pub_date_str: Raw publication date string from RSS/Google.
             description: Optional description/summary text from RSS item.
             threshold: Relevance threshold to apply (default: HYPER_RELEVANCE_THRESHOLD).
+            is_rss_source: If True, use RSS-specific scoring before full fetch.
             debug_mode: If True, print filtered items with their scores.
 
         Returns:
@@ -156,23 +159,26 @@ class TRACENewsScraperV2:
         """
         # Use provided threshold or default
         if threshold is None:
-            threshold = HYPER_RELEVANCE_THRESHOLD
+            threshold = RSS_RELEVANCE_THRESHOLD if is_rss_source else HYPER_RELEVANCE_THRESHOLD
 
         # Check for duplicate URL
         if url in self.seen_urls:
             return None
 
-        # Compute relevance score on title + description
-        score, keywords = self.scorer.compute_score(title, description or "")
+        # Add URL to seen set immediately (before any scoring or filtering)
+        self.seen_urls.add(url)
+
+        # For RSS sources, use compute_score_rss initially (short description scoring)
+        if is_rss_source:
+            score, keywords = self.scorer.compute_score_rss(title, description or "")
+        else:
+            score, keywords = self.scorer.compute_score(title, description or "")
 
         # Filter by relevance threshold
         if score < threshold:
             if debug_mode:
                 print(f"   ⏭️  FILTERED (score={score:.1f}): {title[:60]}...")
             return None
-
-        # Add URL to seen set
-        self.seen_urls.add(url)
 
         # Parse publication date
         pub_datetime = self.fetcher.parse_pub_date(pub_date_str)
@@ -200,9 +206,14 @@ class TRACENewsScraperV2:
         if not fetch_success:
             body_text = f"{title} {description}" if description else title
 
-        # Recompute score with full body if available
+        # Recompute score with full body if fetch succeeded
         if fetch_success and body_text:
             score, keywords = self.scorer.compute_score(title, body_text)
+            # After full article extraction, keep record if is_broadly_relevant returns True
+            if not self.scorer.is_broadly_relevant(title, body_text):
+                if debug_mode:
+                    print(f"   ⏭️  FILTERED (not broadly relevant after fetch): {title[:60]}...")
+                return None
 
         # Build and return record
         return self._build_record(
@@ -264,6 +275,109 @@ class TRACENewsScraperV2:
                     pub_date_str=item["pub_date_str"],
                     description=item["description"],
                     threshold=RSS_RELEVANCE_THRESHOLD,
+                    is_rss_source=True,
+                    debug_mode=debug_mode,
+                )
+
+                if record is not None:
+                    all_records.append(record)
+                    passed += 1
+                else:
+                    filtered += 1
+
+            print(f"   ✅ {passed}/{len(items)} articles passed relevance filter")
+            if debug_mode and filtered > 0:
+                print(f"   ⏭️  {filtered} items filtered")
+
+            # Sleep between sources
+            time.sleep(NEWS_SCRAPER_SETTINGS["request_delay_seconds"])
+
+        # Checkpoint all RSS results
+        if all_records:
+            self.checkpoint.save_records_batch(all_records)
+
+        # Print stage summary
+        print(f"\n📊 Stage 1 Summary: {len(all_records)} total records from RSS")
+
+        # Breakdown by source
+        source_counts: dict[str, int] = {}
+        for record in all_records:
+            source = record["source_detail"]
+            source_counts[source] = source_counts.get(source, 0) + 1
+
+        if source_counts:
+            print("   Records by source:")
+            for source, count in sorted(source_counts.items(), key=lambda x: -x[1]):
+                print(f"      • {source}: {count}")
+
+        return all_records
+
+    def scrape_rss_sources_broad(self, debug_mode: bool = False) -> list[dict]:
+        """
+        Scrape all configured RSS sources using broad RSS-specific scoring.
+
+        Uses compute_score_rss for scoring (optimized for short descriptions)
+        and RSS_RELEVANCE_THRESHOLD (1.0) for filtering to collect a broader
+        range of NBA injury-related content.
+
+        Args:
+            debug_mode: If True, print title and score of every filtered item.
+
+        Returns:
+            List of record dictionaries for articles passing relevance filter.
+        """
+        all_records: list[dict] = []
+
+        print("\n" + "=" * 60)
+        print("📰 STAGE 1: RSS Feed Collection (Broad)")
+        print("=" * 60)
+
+        if debug_mode:
+            print("🔍 DEBUG MODE: Printing all filtered items\n")
+
+        for source_name, config in NEWS_SOURCES.items():
+            rss_url = config.get("rss_url")
+
+            # Skip sources without valid RSS URL
+            if not rss_url:
+                print(f"⏭️  Skipping {source_name} (no RSS URL)")
+                continue
+
+            print(f"\n🔍 Fetching RSS: {source_name}")
+
+            # Fetch RSS feed
+            items = self.fetcher.fetch_rss_feed(source_name, rss_url)
+
+            if not items:
+                print(f"   No items found in {source_name} RSS feed")
+                continue
+
+            # Process each item with RSS-specific scoring and threshold
+            passed = 0
+            filtered = 0
+            for item in items:
+                # Use compute_score_rss directly for scoring
+                score, keywords = self.scorer.compute_score_rss(
+                    item["title"],
+                    item["description"] or ""
+                )
+
+                # Filter by RSS threshold
+                if score < RSS_RELEVANCE_THRESHOLD:
+                    if debug_mode:
+                        print(f"   ⏭️  FILTERED (RSS score={score:.1f}): {item['title'][:60]}...")
+                    filtered += 1
+                    continue
+
+                # Process the URL (will re-score with full text if fetch succeeds)
+                record = self._process_article_url(
+                    title=item["title"],
+                    url=item["url"],
+                    source_name=item["source_name"],
+                    pub_date_str=item["pub_date_str"],
+                    description=item["description"],
+                    threshold=RSS_RELEVANCE_THRESHOLD,
+                    is_rss_source=True,
                     debug_mode=debug_mode,
                 )
 
@@ -435,8 +549,8 @@ class TRACENewsScraperV2:
         Returns:
             DataFrame of all collected records, deduplicated and sorted.
         """
-        # Stage 1: RSS collection
-        rss_records = self.scrape_rss_sources(debug_mode=debug_mode)
+        # Stage 1: RSS collection (broad scoring for maximum coverage)
+        rss_records = self.scrape_rss_sources_broad(debug_mode=debug_mode)
 
         # Stage 2: Player archive search
         player_records = self.scrape_player_archives(list(TARGET_PLAYERS.keys()))

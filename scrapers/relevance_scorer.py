@@ -11,6 +11,11 @@ from scrapers.reddit_config import (
     TARGET_PLAYERS,
     PLAYER_ALIASES,
 )
+from scrapers.news_config import (
+    RSS_RELEVANCE_THRESHOLD,
+    BROAD_INJURY_TERMS,
+    NBA_CONTEXT_TERMS,
+)
 
 
 class TRACERelevanceScorer:
@@ -27,8 +32,11 @@ class TRACERelevanceScorer:
         """
         self.keyword_weights = KEYWORD_WEIGHTS
         self.hyper_relevance_threshold = HYPER_RELEVANCE_THRESHOLD
+        self.rss_relevance_threshold = RSS_RELEVANCE_THRESHOLD
         self.target_players = TARGET_PLAYERS
         self.player_aliases = PLAYER_ALIASES
+        self.broad_injury_terms = BROAD_INJURY_TERMS
+        self.nba_context_terms = NBA_CONTEXT_TERMS
 
     def compute_score(self, title: str, body: str) -> tuple[float, list[str]]:
         """
@@ -74,9 +82,21 @@ class TRACERelevanceScorer:
         injury_words = {"injury", "injured", "out", "hurt", "sidelined", "achilles", "calf", "ankle", "foot", "tendon"}
         has_injury_word = any(word in combined_text for word in injury_words)
         has_player = len(matched_players) > 0
-        
+
         if has_player and has_injury_word:
             total_score += 3.0  # Bonus for player + injury combo
+
+        # Award 0.5 points for each BROAD_INJURY_TERMS match
+        for term in self.broad_injury_terms:
+            if term.lower() in combined_text and term not in matched_keywords:
+                total_score += 0.5
+                matched_keywords.append(term)
+
+        # Award 0.25 points for each NBA_CONTEXT_TERMS match
+        for term in self.nba_context_terms:
+            if term.lower() in combined_text and term not in matched_keywords:
+                total_score += 0.25
+                matched_keywords.append(term)
 
         return total_score, matched_keywords
 
@@ -93,6 +113,116 @@ class TRACERelevanceScorer:
         """
         score, _ = self.compute_score(title, body)
         return score >= self.hyper_relevance_threshold
+
+    def compute_score_rss(self, title: str, description: str) -> tuple[float, list[str]]:
+        """
+        Compute relevance score for short RSS feed content.
+
+        Optimized for RSS titles and descriptions where full text is unavailable.
+        Uses simplified scoring tuned for short snippets.
+
+        Args:
+            title: The RSS item title string.
+            description: The RSS item description/snippet string.
+
+        Returns:
+            A tuple of (total_score, matched_keywords) where:
+            - total_score: Float sum of matched term weights.
+            - matched_keywords: List of all matched keyword strings.
+        """
+        combined_text = f"{title} {description}".lower()
+        total_score = 0.0
+        matched_keywords: list[str] = []
+        matched_players: set[str] = set()
+
+        # Award 10.0 for any achilles term match
+        achilles_terms = ["achilles", "achilles tear", "achilles rupture", "achilles tendon",
+                          "ruptured achilles", "torn achilles", "achilles surgery", "achilles recovery"]
+        for term in achilles_terms:
+            if term.lower() in combined_text and term not in matched_keywords:
+                total_score += 10.0
+                matched_keywords.append(term)
+
+        # Award 5.0 for any player name match
+        for player_name in self.target_players.keys():
+            if player_name.lower() in combined_text and player_name not in matched_players:
+                total_score += 5.0
+                matched_players.add(player_name)
+                matched_keywords.append(f"player:{player_name}")
+
+        for alias, full_name in self.player_aliases.items():
+            if alias.lower() in combined_text and full_name not in matched_players:
+                total_score += 5.0
+                matched_players.add(full_name)
+                matched_keywords.append(f"player:{full_name}")
+
+        # Award 3.0 for any lower leg term match
+        lower_leg_terms = ["calf", "ankle", "foot", "lower leg", "calf strain", "tendon"]
+        for term in lower_leg_terms:
+            if term.lower() in combined_text and term not in matched_keywords:
+                total_score += 3.0
+                matched_keywords.append(term)
+
+        # Award 1.0 for any term in BROAD_INJURY_TERMS
+        for term in self.broad_injury_terms:
+            if term.lower() in combined_text and term not in matched_keywords:
+                total_score += 1.0
+                matched_keywords.append(term)
+
+        # Award 0.5 for any NBA_CONTEXT_TERMS match
+        for term in self.nba_context_terms:
+            if term.lower() in combined_text and term not in matched_keywords:
+                total_score += 0.5
+                matched_keywords.append(term)
+
+        return total_score, matched_keywords
+
+    def is_broadly_relevant(self, title: str, text: str) -> bool:
+        """
+        Fast boolean check for broad relevance without full scoring.
+
+        Returns True if ANY of the following conditions are met:
+        - Combined text contains any achilles term.
+        - Combined text contains any player name from TARGET_PLAYERS or PLAYER_ALIASES.
+        - Combined text contains any lower leg term AND any NBA context term.
+        - Combined text contains at least 2 terms from BROAD_INJURY_TERMS AND any NBA context term.
+
+        Args:
+            title: The content title string.
+            text: The content body/description string.
+
+        Returns:
+            True if the content passes any broad relevance condition.
+        """
+        combined_text = f"{title} {text}".lower()
+
+        # Condition 1: Any achilles term
+        achilles_terms = ["achilles", "achilles tear", "achilles rupture", "achilles tendon",
+                          "ruptured achilles", "torn achilles", "achilles surgery"]
+        if any(term in combined_text for term in achilles_terms):
+            return True
+
+        # Condition 2: Any player name or alias
+        for player_name in self.target_players.keys():
+            if player_name.lower() in combined_text:
+                return True
+        for alias in self.player_aliases.keys():
+            if alias.lower() in combined_text:
+                return True
+
+        # Condition 3: Any lower leg term AND any NBA context term
+        lower_leg_terms = ["calf", "ankle", "foot", "lower leg", "calf strain", "tendon"]
+        has_lower_leg = any(term in combined_text for term in lower_leg_terms)
+        has_nba_context = any(term in combined_text for term in self.nba_context_terms)
+        if has_lower_leg and has_nba_context:
+            return True
+
+        # Condition 4: At least 2 BROAD_INJURY_TERMS AND any NBA context term
+        broad_injury_count = sum(1 for term in self.broad_injury_terms if term in combined_text)
+        if broad_injury_count >= 2 and has_nba_context:
+            return True
+
+        return False
 
     def extract_players(self, text: str) -> list[str]:
         """
@@ -262,4 +392,38 @@ if __name__ == "__main__":
     print(f"Matched Keywords: {keywords3}")
     print(f"Players Mentioned: {scorer.extract_players(test3_title + ' ' + test3_body)}")
     print(f"Recovery Phase: {scorer.detect_recovery_phase(test3_body)}")
+    print()
+
+    # Test Case 4: RSS feed content (short description)
+    test4_title = "Kevin Durant injury update: Star sidelined with calf strain"
+    test4_desc = "NBA player out indefinitely, undergoing treatment."
+
+    score4, keywords4 = scorer.compute_score_rss(test4_title, test4_desc)
+    print("=" * 60)
+    print("TEST CASE 4: RSS Feed (short snippet with player + injury)")
+    print("=" * 60)
+    print(f"RSS Score: {score4}")
+    print(f"Passes RSS Threshold ({scorer.rss_relevance_threshold}): {score4 >= scorer.rss_relevance_threshold}")
+    print(f"Matched Keywords: {keywords4}")
+    print(f"Is Broadly Relevant: {scorer.is_broadly_relevant(test4_title, test4_desc)}")
+    print()
+
+    # Test Case 5: Broad relevance test - lower leg + NBA context
+    test5_title = "Player sidelined with ankle issue"
+    test5_body = "The team says he's day-to-day, missed games this season."
+
+    print("=" * 60)
+    print("TEST CASE 5: Broad Relevance (ankle + NBA context)")
+    print("=" * 60)
+    print(f"Is Broadly Relevant: {scorer.is_broadly_relevant(test5_title, test5_body)}")
+    print()
+
+    # Test Case 6: Broad relevance test - should fail
+    test6_title = "Lakers win championship"
+    test6_body = "Great game last night, amazing performance."
+
+    print("=" * 60)
+    print("TEST CASE 6: Broad Relevance (no injury terms)")
+    print("=" * 60)
+    print(f"Is Broadly Relevant: {scorer.is_broadly_relevant(test6_title, test6_body)}")
     print()

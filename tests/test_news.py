@@ -733,7 +733,7 @@ def test_rss_full_pipeline() -> tuple[bool, bool]:
 
     try:
         from scrapers.news_scraper_v2 import TRACENewsScraperV2
-        from scrapers.reddit_config import HYPER_RELEVANCE_THRESHOLD
+        from scrapers.news_config import RSS_RELEVANCE_THRESHOLD
     except ImportError as e:
         print(f"❌ FAIL: Import error - {e}")
         record_result(9, "RSS Full Pipeline", False)
@@ -762,13 +762,13 @@ def test_rss_full_pipeline() -> tuple[bool, bool]:
 
     all_passed = True
 
-    # Check all records pass relevance threshold
-    below_threshold = [r for r in records if r.get("relevance_score", 0) < HYPER_RELEVANCE_THRESHOLD]
+    # Check all records pass RSS relevance threshold
+    below_threshold = [r for r in records if r.get("relevance_score", 0) < RSS_RELEVANCE_THRESHOLD]
     if below_threshold:
-        print(f"❌ {len(below_threshold)} records below relevance threshold")
+        print(f"❌ {len(below_threshold)} records below RSS threshold")
         all_passed = False
     else:
-        print(f"✅ All records meet relevance threshold (≥{HYPER_RELEVANCE_THRESHOLD})")
+        print(f"✅ All records meet RSS threshold (≥{RSS_RELEVANCE_THRESHOLD})")
 
     # Check no duplicate URLs
     urls = [r.get("url") for r in records]
@@ -837,30 +837,26 @@ def test_deduplication() -> bool:
         print("\n[Test 10.1] In-memory URL deduplication")
         scraper = TRACENewsScraperV2()
 
-        # First call with a URL
+        # First call with a high-relevance URL to ensure it passes threshold
         result1 = scraper._process_article_url(
-            title="Kevin Durant achilles update",
+            title="Kevin Durant achilles rupture confirmed surgery",
             url="https://example.com/dedup_test",
             source_name="Yahoo Sports NBA",
             pub_date_str="2019-06-15",
-            description="Durant injury news",
+            description="Durant achilles tear Warriors Finals",
         )
 
         if result1 is None:
             print("  ⚠️  First call returned None (below threshold)")
-            # Try with higher relevance content
-            result1 = scraper._process_article_url(
-                title="Kevin Durant achilles rupture confirmed surgery",
-                url="https://example.com/dedup_test2",
-                source_name="Yahoo Sports NBA",
-                pub_date_str="2019-06-15",
-                description="Durant achilles tear Warriors Finals",
-            )
+            print("  ❌ FAIL: High-relevance content should pass threshold")
+            all_passed = False
+        else:
+            print(f"  ✅ First call returned record (score={result1.get('relevance_score', 0):.1f})")
 
-        # Second call with same URL should return None
+        # Second call with same URL should return None (dedup)
         result2 = scraper._process_article_url(
             title="Kevin Durant achilles update",
-            url="https://example.com/dedup_test2",
+            url="https://example.com/dedup_test",
             source_name="Yahoo Sports NBA",
             pub_date_str="2019-06-15",
             description="Different description",

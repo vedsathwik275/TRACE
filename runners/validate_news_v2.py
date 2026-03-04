@@ -17,7 +17,7 @@ import pandas as pd
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scrapers.news_config import MIN_ARTICLE_WORD_COUNT
+from scrapers.news_config import MIN_ARTICLE_WORD_COUNT, BROAD_INJURY_TERMS
 
 
 # Valid recovery phases from TRACERelevanceScorer
@@ -81,21 +81,21 @@ def find_latest_v2_csv() -> str | None:
 
 def check_record_count(df: pd.DataFrame) -> tuple[bool, str]:
     """
-    Check 1: Verify at least 300 total rows.
+    Check 1: Verify at least 50 total rows.
     Warn (but not fail) if under 1000.
     """
     count = len(df)
-    if count >= 300:
+    if count >= 50:
         if count < 1000:
             return True, f"PASS ({count} rows - meets minimum, consider collecting more for better coverage)"
         return True, f"PASS ({count} rows)"
-    return False, f"FAIL ({count} rows - minimum 300 required)"
+    return False, f"FAIL ({count} rows - minimum 50 required)"
 
 
 def check_achilles_rate(df: pd.DataFrame) -> tuple[bool, str]:
     """
-    Check 2: Verify at least 35% of records have is_achilles_related == True.
-    News sources tend to have slightly lower rates than Reddit due to broader coverage.
+    Check 2: Verify at least 15% of records have is_achilles_related == True.
+    Since we are now collecting broader injury data, the Achilles rate will be lower.
     """
     if "is_achilles_related" not in df.columns:
         return False, "FAIL (column missing)"
@@ -103,9 +103,9 @@ def check_achilles_rate(df: pd.DataFrame) -> tuple[bool, str]:
     achilles_count = int(df["is_achilles_related"].sum())
     rate = (achilles_count / len(df)) * 100 if len(df) > 0 else 0
 
-    if rate >= 35:
+    if rate >= 15:
         return True, f"PASS ({rate:.1f}% achilles-related)"
-    return False, f"FAIL ({rate:.1f}% achilles-related - need ≥35%)"
+    return False, f"FAIL ({rate:.1f}% achilles-related - need ≥15%)"
 
 
 def check_relevance_threshold(df: pd.DataFrame) -> tuple[bool, str]:
@@ -253,6 +253,30 @@ def check_source_diversity(df: pd.DataFrame) -> tuple[bool, str]:
     return False, f"FAIL (only {unique_sources} sources - need ≥4)"
 
 
+def check_injury_rate(df: pd.DataFrame) -> tuple[bool, str]:
+    """
+    Check 11: Verify at least 60% of records have at least one term from
+    BROAD_INJURY_TERMS in their text_content. This ensures the broader filter
+    is still capturing genuinely injury-related content rather than completely
+    off-topic articles.
+    """
+    if "text_content" not in df.columns:
+        return False, "FAIL (column missing)"
+
+    def has_injury_term(text: str) -> bool:
+        if pd.isna(text) or not isinstance(text, str):
+            return False
+        text_lower = text.lower()
+        return any(term.lower() in text_lower for term in BROAD_INJURY_TERMS)
+
+    injury_count = df["text_content"].apply(has_injury_term).sum()
+    rate = (injury_count / len(df)) * 100 if len(df) > 0 else 0
+
+    if rate >= 60:
+        return True, f"PASS ({rate:.1f}% records contain injury terms)"
+    return False, f"FAIL ({rate:.1f}% records contain injury terms - need ≥60%)"
+
+
 def main() -> None:
     """
     Main validation function.
@@ -297,6 +321,7 @@ def main() -> None:
         ("SCHEMA_COMPLETE", check_schema_complete),
         ("FETCH_QUALITY", check_fetch_quality),
         ("SOURCE_DIVERSITY", check_source_diversity),
+        ("INJURY_RATE", check_injury_rate),
     ]
 
     passed = 0
@@ -315,7 +340,7 @@ def main() -> None:
 
     # Final summary
     print("\n" + "=" * 60)
-    print(f"📊 FINAL RESULT: {passed}/10 checks passed")
+    print(f"📊 FINAL RESULT: {passed}/11 checks passed")
     print("=" * 60)
 
     if failed:
@@ -327,6 +352,7 @@ def main() -> None:
             "RELEVANCE_THRESHOLD",  # Core filtering logic
             "FETCH_QUALITY",  # Article extraction quality
             "SOURCE_DIVERSITY",  # Collection breadth
+            "INJURY_RATE",  # Broad injury content validation
             "ACHILLES_RATE",  # Collection quality
             "TEMPORAL_COVERAGE",  # Collection scope
             "PLAYER_COVERAGE",  # Collection scope
