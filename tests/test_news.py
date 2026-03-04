@@ -59,9 +59,6 @@ def test_config_import() -> bool:
     try:
         from scrapers.news_config import (
             NEWS_SOURCES,
-            GOOGLE_NEWS_QUERY_TEMPLATE,
-            PLAYER_INJURY_WINDOWS,
-            ARTICLE_SEARCH_QUERIES,
             FULL_ARTICLE_TIMEOUT_SECONDS,
             MIN_ARTICLE_WORD_COUNT,
             NEWS_SCRAPER_SETTINGS,
@@ -73,33 +70,12 @@ def test_config_import() -> bool:
 
     all_passed = True
 
-    # Check NEWS_SOURCES: non-empty dict
+    # Check NEWS_SOURCES: non-empty dict with 12 entries
     if not isinstance(NEWS_SOURCES, dict) or len(NEWS_SOURCES) == 0:
         print("❌ NEWS_SOURCES: Expected non-empty dict")
         all_passed = False
     else:
         print(f"✅ NEWS_SOURCES: dict with {len(NEWS_SOURCES)} sources")
-
-    # Check GOOGLE_NEWS_QUERY_TEMPLATE: non-empty string
-    if not isinstance(GOOGLE_NEWS_QUERY_TEMPLATE, str) or len(GOOGLE_NEWS_QUERY_TEMPLATE) == 0:
-        print("❌ GOOGLE_NEWS_QUERY_TEMPLATE: Expected non-empty string")
-        all_passed = False
-    else:
-        print(f"✅ GOOGLE_NEWS_QUERY_TEMPLATE: string ({len(GOOGLE_NEWS_QUERY_TEMPLATE)} chars)")
-
-    # Check PLAYER_INJURY_WINDOWS: non-empty dict
-    if not isinstance(PLAYER_INJURY_WINDOWS, dict) or len(PLAYER_INJURY_WINDOWS) == 0:
-        print("❌ PLAYER_INJURY_WINDOWS: Expected non-empty dict")
-        all_passed = False
-    else:
-        print(f"✅ PLAYER_INJURY_WINDOWS: dict with {len(PLAYER_INJURY_WINDOWS)} player windows")
-
-    # Check ARTICLE_SEARCH_QUERIES: non-empty list
-    if not isinstance(ARTICLE_SEARCH_QUERIES, list) or len(ARTICLE_SEARCH_QUERIES) == 0:
-        print("❌ ARTICLE_SEARCH_QUERIES: Expected non-empty list")
-        all_passed = False
-    else:
-        print(f"✅ ARTICLE_SEARCH_QUERIES: list with {len(ARTICLE_SEARCH_QUERIES)} queries")
 
     # Check FULL_ARTICLE_TIMEOUT_SECONDS: integer
     if not isinstance(FULL_ARTICLE_TIMEOUT_SECONDS, int):
@@ -939,294 +915,187 @@ def test_deduplication() -> bool:
 
 
 # =============================================================================
-# Test 11: Google News Searcher Init
+# Test 11: New RSS Sources Reachable
 # =============================================================================
 
-def test_google_news_searcher_init() -> bool:
+def test_new_rss_sources_reachable() -> bool:
     """
-    Test 11 — Google News Searcher Init
+    Test 11 — New RSS Sources Reachable
 
-    Instantiate TRACEGoogleNewsSearcher and verify initialization.
-    No network calls.
+    Iterate over all 10 entries in NEWS_SOURCES, fetch each RSS feed with
+    requests (10-second timeout), then parse with feedparser. Assert that
+    feed.entries is a list (even if empty). Mark any source that returns
+    0 entries as a warning.
     """
-    print_test_header(11, "Google News Searcher Init")
+    print_test_header(11, "New RSS Sources Reachable")
 
     try:
-        from scrapers.google_news_searcher import TRACEGoogleNewsSearcher
-        from scrapers.news_config import PLAYER_INJURY_WINDOWS
+        import feedparser
+        import requests
+        from scrapers.news_config import NEWS_SOURCES
     except ImportError as e:
         print(f"❌ FAIL: Import error - {e}")
-        record_result(11, "Google News Searcher Init", False)
+        record_result(11, "New RSS Sources Reachable", False)
         return False
 
     all_passed = True
+    warnings = []
 
-    # Instantiate searcher
-    try:
-        searcher = TRACEGoogleNewsSearcher()
-        print("✅ TRACEGoogleNewsSearcher initialized successfully")
-    except Exception as e:
-        print(f"❌ FAIL: Could not instantiate searcher - {e}")
-        record_result(11, "Google News Searcher Init", False)
-        return False
-
-    # Verify seen_urls set exists and is empty
-    if not hasattr(searcher, '_seen_urls'):
-        print("❌ FAIL: _seen_urls attribute not found")
-        all_passed = False
-    elif not isinstance(searcher._seen_urls, set):
-        print(f"❌ FAIL: _seen_urls is not a set, got {type(searcher._seen_urls)}")
-        all_passed = False
-    elif len(searcher._seen_urls) != 0:
-        print(f"❌ FAIL: _seen_urls should be empty on fresh instance, got {len(searcher._seen_urls)} items")
+    # Verify we have 10 sources
+    if len(NEWS_SOURCES) != 10:
+        print(f"❌ FAIL: Expected 10 RSS sources, got {len(NEWS_SOURCES)}")
         all_passed = False
     else:
-        print("✅ _seen_urls set exists and is empty")
+        print(f"✅ Found {len(NEWS_SOURCES)} RSS sources")
 
-    # Verify PLAYER_INJURY_WINDOWS loaded
-    if not hasattr(searcher, 'player_windows'):
-        print("❌ FAIL: player_windows attribute not found")
-        all_passed = False
-    elif not isinstance(searcher.player_windows, dict) or len(searcher.player_windows) == 0:
-        print(f"❌ FAIL: player_windows should be non-empty dict")
-        all_passed = False
-    else:
-        print(f"✅ PLAYER_INJURY_WINDOWS loaded with {len(searcher.player_windows)} entries")
+    # Set up session with timeout
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    })
 
-    # Test build_search_url
-    url = searcher.build_search_url("Kevin Durant achilles", 2019, 2020)
+    # Test each RSS feed
+    for source_name, config in NEWS_SOURCES.items():
+        rss_url = config.get("rss_url")
+        if not rss_url:
+            print(f"⚠️  {source_name}: No RSS URL configured")
+            warnings.append(source_name)
+            continue
 
-    if not isinstance(url, str) or len(url) == 0:
-        print("❌ FAIL: build_search_url did not return a non-empty string")
-        all_passed = False
-    else:
-        print(f"✅ build_search_url returned non-empty string ({len(url)} chars)")
+        try:
+            # Fetch with 10-second timeout
+            response = session.get(rss_url, timeout=10)
+            response.raise_for_status()
 
-        # Verify URL contains expected elements
-        url_lower = url.lower()
-        has_year = "2019" in url
-        has_player_or_term = "durant" in url_lower or "achilles" in url_lower
+            # Parse the content
+            feed = feedparser.parse(response.content)
 
-        if has_year and has_player_or_term:
-            print(f"✅ URL contains expected year and query terms")
-        else:
-            print(f"❌ FAIL: URL missing expected content (year={has_year}, player/term={has_player_or_term})")
-            print(f"   URL: {url[:200]}...")
+            # Check that entries is a list
+            if not isinstance(feed.entries, list):
+                print(f"❌ {source_name}: feed.entries is not a list")
+                all_passed = False
+            elif len(feed.entries) == 0:
+                print(f"⚠️  {source_name}: 0 entries (feed may be temporarily unavailable)")
+                warnings.append(source_name)
+            else:
+                print(f"✅ {source_name}: {len(feed.entries)} entries fetched")
+
+        except requests.exceptions.Timeout:
+            print(f"❌ {source_name}: Request timed out (10s)")
             all_passed = False
+            warnings.append(source_name)
+        except requests.exceptions.RequestException as e:
+            print(f"❌ {source_name}: Network error - {e}")
+            all_passed = False
+            warnings.append(source_name)
+        except Exception as e:
+            print(f"❌ {source_name}: Failed to parse - {e}")
+            all_passed = False
+            warnings.append(source_name)
 
-    record_result(11, "Google News Searcher Init", all_passed)
+    # Print warnings summary
+    if warnings:
+        print(f"\n⚠️  Sources with warnings ({len(warnings)}): {', '.join(warnings)}")
+
+    record_result(11, "New RSS Sources Reachable", all_passed)
     return all_passed
 
 
 # =============================================================================
-# Test 12: Search URL Structure
+# Test 12: RSS Source Count
 # =============================================================================
 
-def test_search_url_structure() -> bool:
+def test_rss_source_count() -> bool:
     """
-    Test 12 — Search URL Structure
+    Test 12 — RSS Source Count
 
-    Call build_search_url for 3 different player-year combinations.
-    Verify distinct, non-empty URLs with expected years.
-    Verify deterministic output (same args = same URL).
-    No network calls.
+    Assert len(NEWS_SOURCES) == 10 and that all values start with https://.
     """
-    print_test_header(12, "Search URL Structure")
+    print_test_header(12, "RSS Source Count")
 
     try:
-        from scrapers.google_news_searcher import TRACEGoogleNewsSearcher
-        from scrapers.reddit_config import TARGET_PLAYERS
+        from scrapers.news_config import NEWS_SOURCES
     except ImportError as e:
         print(f"❌ FAIL: Import error - {e}")
-        record_result(12, "Search URL Structure", False)
-        return False
-
-    try:
-        searcher = TRACEGoogleNewsSearcher()
-    except Exception as e:
-        print(f"❌ FAIL: Could not instantiate searcher - {e}")
-        record_result(12, "Search URL Structure", False)
+        record_result(12, "RSS Source Count", False)
         return False
 
     all_passed = True
 
-    # Get 3 players with different injury years
-    # Kevin Durant (2019), Klay Thompson (2019), DeMarcus Cousins (2018)
-    test_cases = [
-        ("Kevin Durant", 2019, 2020),
-        ("DeMarcus Cousins", 2017, 2019),
-        ("Wesley Matthews", 2014, 2016),
+    # Check count
+    if len(NEWS_SOURCES) != 10:
+        print(f"❌ FAIL: Expected 10 RSS sources, got {len(NEWS_SOURCES)}")
+        all_passed = False
+    else:
+        print(f"✅ NEWS_SOURCES has 10 entries")
+
+    # Check all URLs start with https://
+    non_https = []
+    for source_name, config in NEWS_SOURCES.items():
+        rss_url = config.get("rss_url", "")
+        if not rss_url.startswith("https://"):
+            non_https.append(source_name)
+
+    if non_https:
+        print(f"❌ FAIL: Sources without https:// URLs: {', '.join(non_https)}")
+        all_passed = False
+    else:
+        print(f"✅ All RSS URLs start with https://")
+
+    record_result(12, "RSS Source Count", all_passed)
+    return all_passed
+
+
+# =============================================================================
+# Test 13: No Google News References
+# =============================================================================
+
+def test_no_google_news_references() -> bool:
+    """
+    Test 13 — No Google News References
+
+    Scan the source text of news_scraper_v2.py and news_config.py using open()
+    + string search, and assert that neither file contains the strings "google",
+    "gnews", or "GOOGLE_NEWS_QUERY_TEMPLATE" (case-insensitive).
+    This confirms the removal is clean.
+    """
+    print_test_header(13, "No Google News References")
+
+    all_passed = True
+
+    # Files to check
+    files_to_check = [
+        "scrapers/news_scraper_v2.py",
+        "scrapers/news_config.py",
     ]
 
-    urls = []
-    for player, start_year, end_year in test_cases:
-        url = searcher.build_search_url(f"{player} achilles", start_year, end_year)
-        urls.append(url)
+    # Strings that should not appear
+    forbidden_strings = ["google", "gnews", "google_news", "GOOGLE_NEWS_QUERY_TEMPLATE"]
 
-        # Verify non-empty
-        if not url or not isinstance(url, str):
-            print(f"❌ FAIL: URL for {player} is empty or not a string")
-            all_passed = False
-        else:
-            # Verify contains expected year
-            if str(start_year) not in url:
-                print(f"❌ FAIL: URL for {player} missing start year {start_year}")
+    for filepath in files_to_check:
+        try:
+            with open(filepath, "r") as f:
+                content = f.read().lower()
+
+            found_forbidden = []
+            for forbidden in forbidden_strings:
+                if forbidden.lower() in content:
+                    found_forbidden.append(forbidden)
+
+            if found_forbidden:
+                print(f"❌ {filepath}: Contains forbidden strings: {', '.join(found_forbidden)}")
                 all_passed = False
             else:
-                print(f"✅ URL for {player} contains start year {start_year}")
+                print(f"✅ {filepath}: No Google News references found")
 
-    # Verify all URLs are distinct
-    if len(set(urls)) != len(urls):
-        print(f"❌ FAIL: Not all URLs are distinct")
-        all_passed = False
-    else:
-        print(f"✅ All {len(urls)} URLs are distinct")
+        except FileNotFoundError:
+            print(f"⚠️  {filepath}: File not found (skipping)")
+        except Exception as e:
+            print(f"❌ {filepath}: Error reading file - {e}")
+            all_passed = False
 
-    # Verify deterministic output (same args = same URL)
-    url1 = searcher.build_search_url("Kevin Durant achilles", 2019, 2020)
-    url2 = searcher.build_search_url("Kevin Durant achilles", 2019, 2020)
-
-    if url1 == url2:
-        print(f"✅ build_search_url is deterministic (same args = same URL)")
-    else:
-        print(f"❌ FAIL: build_search_url is not deterministic")
-        all_passed = False
-
-    record_result(12, "Search URL Structure", all_passed)
+    record_result(13, "No Google News References", all_passed)
     return all_passed
-
-
-# =============================================================================
-# Test 13: Execute Search Stub
-# =============================================================================
-
-def test_execute_search_stub() -> tuple[bool, bool]:
-    """
-    Test 13 — Execute Search Stub
-
-    Verify _execute_search handles failure gracefully.
-    Optionally test with real network call (skippable).
-    """
-    print_test_header(13, "Execute Search Stub")
-
-    try:
-        from scrapers.google_news_searcher import TRACEGoogleNewsSearcher
-    except ImportError as e:
-        print(f"❌ FAIL: Import error - {e}")
-        record_result(13, "Execute Search Stub", False)
-        return False, False
-
-    try:
-        searcher = TRACEGoogleNewsSearcher()
-    except Exception as e:
-        print(f"❌ FAIL: Could not instantiate searcher - {e}")
-        record_result(13, "Execute Search Stub", False)
-        return False, False
-
-    all_passed = True
-    skipped = False
-
-    # Test 13.1: Verify graceful failure on ConnectionError
-    print("\n[Test 13.1] Graceful failure on ConnectionError")
-
-    # Monkeypatch the session.get to raise ConnectionError
-    original_get = searcher.session.get
-
-    def mock_get(*args, **kwargs):
-        raise ConnectionError("Simulated connection error")
-
-    searcher.session.get = mock_get
-
-    try:
-        result = searcher._execute_search("test query", 2020)
-
-        if isinstance(result, list) and len(result) == 0:
-            print("  ✅ PASS: Returns empty list on ConnectionError")
-        else:
-            print(f"  ❌ FAIL: Expected empty list, got {type(result)} with {len(result) if hasattr(result, '__len__') else 'N/A'} items")
-            all_passed = False
-    except Exception as e:
-        print(f"  ❌ FAIL: Exception raised instead of returning empty list - {e}")
-        all_passed = False
-
-    # Restore original get
-    searcher.session.get = original_get
-
-    # Test 13.2: Try real network call (skippable)
-    print("\n[Test 13.2] Real network call with timeout")
-
-    try:
-        import requests
-        from requests.adapters import HTTPAdapter
-        from urllib3.util.timeout import Timeout
-
-        # Set a 3-second timeout for this test
-        timeout = Timeout(connect=3.0, read=3.0)
-        searcher.session.mount('https://', HTTPAdapter(max_retries=0))
-
-        result = searcher._execute_search("Kevin Durant achilles", 2019)
-
-        if not isinstance(result, list):
-            print(f"  ❌ FAIL: Expected list, got {type(result)}")
-            all_passed = False
-        elif len(result) == 0:
-            print(f"  ℹ️  No results returned (may be expected)")
-        else:
-            # Verify structure of returned items
-            expected_keys = {"title", "url", "pub_date_str", "source_name"}
-            valid_items = 0
-            for item in result[:3]:  # Check first 3
-                if isinstance(item, dict) and expected_keys.issubset(item.keys()):
-                    valid_items += 1
-
-            if valid_items > 0:
-                print(f"  ✅ PASS: Returned {len(result)} items, {valid_items} checked have valid structure")
-
-                # Verify URLs added to seen_urls
-                initial_seen = len(searcher._seen_urls)
-                if initial_seen > 0:
-                    print(f"  ✅ {initial_seen} URLs added to seen_urls set")
-                else:
-                    print(f"  ⚠️  No URLs added to seen_urls (may indicate filtering)")
-            else:
-                print(f"  ❌ FAIL: Items missing expected keys")
-                all_passed = False
-
-    except requests.exceptions.Timeout:
-        print(f"  ⚠️  SKIP: Network call timed out (3s limit)")
-        skipped = True
-    except requests.exceptions.RequestException as e:
-        print(f"  ⚠️  SKIP: Network call failed - {e}")
-        skipped = True
-    except Exception as e:
-        print(f"  ⚠️  SKIP: Unexpected error - {e}")
-        skipped = True
-
-    # Test 13.3: Verify deduplication on second call
-    print("\n[Test 13.3] Deduplication on repeated calls")
-
-    # Record current seen URLs
-    seen_before = set(searcher._seen_urls)
-
-    # Call again with same query
-    result2 = searcher._execute_search("Kevin Durant achilles", 2019)
-
-    # Any URLs returned should not be in the original seen set
-    if isinstance(result2, list):
-        new_urls = [r.get("url") for r in result2 if isinstance(r, dict) and r.get("url")]
-        duplicates = [u for u in new_urls if u in seen_before]
-
-        if len(duplicates) == 0:
-            print(f"  ✅ PASS: No duplicate URLs from second call")
-        else:
-            print(f"  ⚠️  {len(duplicates)} URLs were already in seen set (may be expected if search returns different results)")
-
-    if skipped:
-        record_result(13, "Execute Search Stub", all_passed, skipped=True)
-    else:
-        record_result(13, "Execute Search Stub", all_passed)
-
-    return all_passed, skipped
 
 
 # =============================================================================
@@ -1244,8 +1113,6 @@ def test_gap_fill_logic() -> bool:
 
     try:
         from scrapers.checkpoint_manager import TRACECheckpointManager
-        from scrapers.news_config import ARTICLE_SEARCH_QUERIES
-        from scrapers.reddit_config import TARGET_PLAYERS
     except ImportError as e:
         print(f"❌ FAIL: Import error - {e}")
         record_result(14, "Gap Fill Logic", False)
@@ -1354,27 +1221,6 @@ def test_gap_fill_logic() -> bool:
         else:
             print(f"  ✅ 2025 correctly excluded (outside scan window)")
 
-        # Test 14.3: Verify ARTICLE_SEARCH_QUERIES has player-agnostic queries
-        print("\n[Test 14.3] Verifying player-agnostic queries exist")
-
-        player_names = [name.lower() for name in TARGET_PLAYERS.keys()]
-        player_agnostic = []
-
-        for query in ARTICLE_SEARCH_QUERIES:
-            query_lower = query.lower()
-            # Check if query contains any player name
-            has_player = any(player in query_lower for player in player_names)
-            if not has_player:
-                player_agnostic.append(query)
-
-        if len(player_agnostic) == 0:
-            print(f"  ❌ FAIL: No player-agnostic queries found")
-            all_passed = False
-        else:
-            print(f"  ✅ Found {len(player_agnostic)} player-agnostic queries:")
-            for q in player_agnostic[:4]:
-                print(f"      • {q}")
-
     except Exception as e:
         print(f"❌ FAIL: Exception - {e}")
         import traceback
@@ -1434,14 +1280,14 @@ def main() -> None:
     # Test 10: Deduplication
     test_deduplication()
 
-    # Test 11: Google News Searcher Init
-    test_google_news_searcher_init()
+    # Test 11: New RSS Sources Reachable
+    test_new_rss_sources_reachable()
 
-    # Test 12: Search URL Structure
-    test_search_url_structure()
+    # Test 12: RSS Source Count
+    test_rss_source_count()
 
-    # Test 13: Execute Search Stub
-    test_execute_search_stub()
+    # Test 13: No Google News References
+    test_no_google_news_references()
 
     # Test 14: Gap Fill Logic
     test_gap_fill_logic()

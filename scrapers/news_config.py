@@ -5,13 +5,12 @@ Configuration constants for the TRACE News scraper.
 This module contains only data constants — no classes, no functions, no scraping logic.
 """
 
-from scrapers.reddit_config import TARGET_PLAYERS
-
 # =============================================================================
-# NEWS SOURCES
+# NEWS SOURCES (10 total)
 # =============================================================================
 
 NEWS_SOURCES: dict[str, dict[str, str | bool | None]] = {
+    # Original 6 sources
     "ESPN NBA": {
         "rss_url": "https://www.espn.com/espn/rss/nba/news",
         "fetch_full_article": True,
@@ -36,49 +35,24 @@ NEWS_SOURCES: dict[str, dict[str, str | bool | None]] = {
         "rss_url": "https://hoopsrumors.com/feed",
         "fetch_full_article": True,
     },
+    # New 4 sources
+    "RealGM Wiretap": {
+        "rss_url": "https://basketball.realgm.com/rss/realgm_nba_wiretap.xml",
+        "fetch_full_article": True,
+    },
+    "Sportsnet NBA": {
+        "rss_url": "https://www.sportsnet.ca/basketball/nba/feed/",
+        "fetch_full_article": True,
+    },
+    "ClutchPoints NBA": {
+        "rss_url": "https://clutchpoints.com/sports/nba/feed",
+        "fetch_full_article": True,
+    },
+    "The Cold Wire NBA": {
+        "rss_url": "https://thecoldwire.com/sports/nba/feed",
+        "fetch_full_article": True,
+    },
 }
-
-# =============================================================================
-# GOOGLE NEWS QUERY TEMPLATE
-# =============================================================================
-
-GOOGLE_NEWS_QUERY_TEMPLATE: str = (
-    "https://www.google.com/search?q={player}+{injury_term}"
-    "&tbm=nws&tbs=cdr:1,cd_min:{start_year},cd_end:{end_year}"
-    "&siteordomain=espn.com&siteordomain=cbssports.com&siteordomain=theathletic.com"
-    "&siteordomain=bleacherreport.com&siteordomain=si.com&siteordomain=usatoday.com"
-    "&siteordomain=nbcsports.com"
-)
-
-# =============================================================================
-# PLAYER INJURY WINDOWS
-# =============================================================================
-
-# Computed programmatically: (injury_year - 1, injury_year + 2)
-PLAYER_INJURY_WINDOWS: dict[str, tuple[int, int]] = {}
-for player_name, injury_date_str in TARGET_PLAYERS.items():
-    injury_year = int(injury_date_str.split("-")[0])
-    PLAYER_INJURY_WINDOWS[player_name] = (injury_year - 1, injury_year + 2)
-
-# =============================================================================
-# ARTICLE SEARCH QUERIES
-# =============================================================================
-
-ARTICLE_SEARCH_QUERIES: list[str] = []
-
-# Player-specific queries (3 per player)
-for player_name in TARGET_PLAYERS.keys():
-    ARTICLE_SEARCH_QUERIES.append(f"{player_name} achilles")
-    ARTICLE_SEARCH_QUERIES.append(f"{player_name} achilles injury return")
-    ARTICLE_SEARCH_QUERIES.append(f"{player_name} injury recovery NBA")
-
-# Player-agnostic queries
-ARTICLE_SEARCH_QUERIES.extend([
-    "NBA achilles injury recovery",
-    "NBA achilles rupture return to play",
-    "achilles tendon NBA surgery outcome",
-    "NBA player achilles career",
-])
 
 # =============================================================================
 # ARTICLE EXTRACTION SETTINGS

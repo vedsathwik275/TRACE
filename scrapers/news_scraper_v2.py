@@ -2,8 +2,8 @@
 """
 TRACE News Scraper V2 - Historical news article collection.
 
-Improved scraper with Google News search, full article fetching, and checkpointing.
-Produces output conforming to the 27-column unified schema.
+Collects articles from RSS feeds, fetches full article content, and applies
+relevance scoring. Produces output conforming to the 27-column unified schema.
 """
 
 import json
@@ -16,15 +16,12 @@ import pandas as pd
 from scrapers.news_config import (
     NEWS_SOURCES,
     NEWS_SCRAPER_SETTINGS,
-    ARTICLE_SEARCH_QUERIES,
-    PLAYER_INJURY_WINDOWS,
     MIN_ARTICLE_WORD_COUNT,
     RSS_RELEVANCE_THRESHOLD,
     BROAD_INJURY_TERMS,
 )
-from scrapers.reddit_config import TARGET_PLAYERS, KEYWORD_WEIGHTS, HYPER_RELEVANCE_THRESHOLD
+from scrapers.reddit_config import KEYWORD_WEIGHTS, HYPER_RELEVANCE_THRESHOLD
 from scrapers.article_fetcher import TRACEArticleFetcher
-from scrapers.google_news_searcher import TRACEGoogleNewsSearcher
 from scrapers.relevance_scorer import TRACERelevanceScorer
 from scrapers.checkpoint_manager import TRACECheckpointManager
 
@@ -33,16 +30,15 @@ class TRACENewsScraperV2:
     """
     Historical news scraper for NBA Achilles injury content.
 
-    Collects articles from RSS feeds and Google News archive search,
-    fetches full article content, and applies relevance scoring.
+    Collects articles from RSS feeds, fetches full article content, and applies
+    relevance scoring.
     """
 
     def __init__(self) -> None:
         """
-        Initialize the news scraper with fetcher, searcher, scorer, and checkpoint manager.
+        Initialize the news scraper with fetcher, scorer, and checkpoint manager.
         """
         self.fetcher = TRACEArticleFetcher()
-        self.searcher = TRACEGoogleNewsSearcher()
         self.scorer = TRACERelevanceScorer()
         self.checkpoint = TRACECheckpointManager(
             checkpoint_dir=NEWS_SCRAPER_SETTINGS["checkpoint_dir"]
@@ -147,7 +143,7 @@ class TRACENewsScraperV2:
             title: Article title string.
             url: Article URL string.
             source_name: Human-readable source name.
-            pub_date_str: Raw publication date string from RSS/Google.
+            pub_date_str: Raw publication date string from RSS feed.
             description: Optional description/summary text from RSS item.
             threshold: Relevance threshold to apply (default: HYPER_RELEVANCE_THRESHOLD).
             is_rss_source: If True, use RSS-specific scoring before full fetch.
@@ -414,72 +410,17 @@ class TRACENewsScraperV2:
 
         return all_records
 
-    def scrape_player_archives(self, player_list: list[str]) -> list[dict]:
-        """
-        Search Google News archive for each player and process results.
-
-        Args:
-            player_list: List of player names to search for.
-
-        Returns:
-            List of record dictionaries for articles passing relevance filter.
-        """
-        all_records: list[dict] = []
-        running_total = 0
-
-        print("\n" + "=" * 60)
-        print("📰 STAGE 2: Historical Archive Search (Player-Specific)")
-        print("=" * 60)
-
-        total_players = len(player_list)
-
-        for i, player_name in enumerate(player_list, 1):
-            pct = (i / total_players) * 100
-            print(f"\n[{i}/{total_players}] ({pct:.0f}%) Searching: {player_name}")
-
-            # Get candidate article URLs from Google News
-            articles = self.searcher.search_for_player(player_name)
-
-            if not articles:
-                print(f"   No articles found for {player_name}")
-                continue
-
-            # Process each article
-            player_records: list[dict] = []
-            for article in articles:
-                record = self._process_article_url(
-                    title=article["title"],
-                    url=article["url"],
-                    source_name=article["source_name"],
-                    pub_date_str=article["pub_date_str"],
-                )
-
-                if record is not None:
-                    player_records.append(record)
-
-            # Checkpoint records for this player
-            if player_records:
-                self.checkpoint.save_records_batch(player_records)
-                running_total += len(player_records)
-
-            print(f"   ✅ {len(player_records)} articles passed filter (total: {running_total})")
-
-            all_records.extend(player_records)
-
-            # Sleep between players
-            time.sleep(NEWS_SCRAPER_SETTINGS["request_delay_seconds"])
-
-        return all_records
-
     def _run_gap_filling(self) -> list[dict]:
         """
         Stage 3: Gap-filling pass for underrepresented years.
 
+        Reports which years have thin coverage. Does not perform any web searches.
+
         Returns:
-            List of record dictionaries from gap-filling searches.
+            Empty list (gap-filling via web search has been removed).
         """
         print("\n" + "=" * 60)
-        print("📰 STAGE 3: Gap-Filling Pass")
+        print("📰 STAGE 3: Gap-Filling Analysis")
         print("=" * 60)
 
         # Load current checkpointed records
@@ -503,45 +444,20 @@ class TRACENewsScraperV2:
             print("   ✅ All years have ≥100 records - no gap filling needed")
             return []
 
-        print(f"   Underrepresented years: {underrepresented}")
+        # Log warning for each underrepresented year
+        print(f"\n⚠️  Underrepresented years (coverage < 100 records):")
+        for year in sorted(underrepresented):
+            count = year_counts.get(year, 0)
+            print(f"   • {year}: {count} records")
 
-        # Player-agnostic queries (last 4 in ARTICLE_SEARCH_QUERIES)
-        player_agnostic = ARTICLE_SEARCH_QUERIES[-4:]
+        print("\nℹ️  Note: Web search gap-filling has been removed.")
+        print("   To improve coverage for thin years, add more RSS sources.")
 
-        gap_records: list[dict] = []
-
-        for year in underrepresented:
-            print(f"\n🔍 Gap-filling for year {year}...")
-
-            for query in player_agnostic:
-                # Execute search for this query and year
-                articles = self.searcher._execute_search(query, year)
-
-                for article in articles:
-                    record = self._process_article_url(
-                        title=article["title"],
-                        url=article["url"],
-                        source_name=article["source_name"],
-                        pub_date_str=article["pub_date_str"],
-                    )
-
-                    if record is not None:
-                        gap_records.append(record)
-
-                # Sleep between searches
-                time.sleep(NEWS_SCRAPER_SETTINGS["request_delay_seconds"])
-
-            print(f"   Found {len(gap_records)} additional records for {year}")
-
-        # Checkpoint gap-filling results
-        if gap_records:
-            self.checkpoint.save_records_batch(gap_records)
-
-        return gap_records
+        return []
 
     def run_phase1_collection(self, debug_mode: bool = False) -> pd.DataFrame:
         """
-        Orchestrate full Phase 1 news collection across three stages.
+        Orchestrate full Phase 1 news collection from RSS sources.
 
         Args:
             debug_mode: If True, print title and score of every filtered RSS item.
@@ -552,10 +468,9 @@ class TRACENewsScraperV2:
         # Stage 1: RSS collection (broad scoring for maximum coverage)
         rss_records = self.scrape_rss_sources_broad(debug_mode=debug_mode)
 
-        # Stage 2: Player archive search
-        player_records = self.scrape_player_archives(list(TARGET_PLAYERS.keys()))
+        # Stage 2: Removed (web search has been deprecated)
 
-        # Stage 3: Gap-filling
+        # Stage 3: Gap-filling analysis (reports thin years, no web searches)
         gap_records = self._run_gap_filling()
 
         # =====================================================================
