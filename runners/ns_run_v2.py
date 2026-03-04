@@ -75,17 +75,34 @@ def main() -> None:
     # Total record count
     print(f"\n📈 TOTAL RECORDS: {len(df)}")
 
+    # Breakdown by source type (RSS vs Google News)
+    print("\n📰 RECORDS BY SOURCE TYPE:")
+    rss_count = len(df[df["source_detail"].str.contains("Google News", na=False) == False])
+    gnews_count = len(df[df["source_detail"].str.contains("Google News", na=False)])
+    print(f"   • RSS Feeds: {rss_count}")
+    print(f"   • Google News RSS: {gnews_count}")
+
     # Breakdown by source_detail
     print("\n📰 RECORDS BY SOURCE:")
     source_counts = df["source_detail"].value_counts().sort_values(ascending=False)
     for source, count in source_counts.items():
         print(f"   • {source}: {count}")
 
-    # Breakdown by year (chronological)
+    # Breakdown by year (chronological) with historical emphasis
     print("\n📅 RECORDS BY YEAR:")
     year_counts = df["year"].value_counts().sort_index()
+    historical_count = 0
+    recent_count = 0
     for year, count in year_counts.items():
-        print(f"   • {year}: {count}")
+        marker = ""
+        if 2015 <= year <= 2024:
+            historical_count += count
+            marker = " (historical)"
+        else:
+            recent_count += count
+        print(f"   • {year}: {count}{marker}")
+    print(f"\n   Historical (2015-2024): {historical_count} records")
+    print(f"   Recent (2025-2026): {recent_count} records")
 
     # Top 10 mentioned players
     print("\n🏀 TOP 10 MENTIONED PLAYERS:")
@@ -105,6 +122,7 @@ def main() -> None:
     if top_10:
         for i, (player, count) in enumerate(top_10, 1):
             print(f"   {i:2d}. {player}: {count} mentions")
+        print(f"\n   Total unique players: {len(player_counts)}")
     else:
         print("   (No players mentioned)")
 

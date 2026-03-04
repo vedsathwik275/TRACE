@@ -2,16 +2,20 @@
 """
 TRACE News Scraper V2 - Historical news article collection.
 
-Collects articles from RSS feeds, fetches full article content, and applies
-relevance scoring. Produces output conforming to the 27-column unified schema.
+Collects articles from RSS feeds and Google News RSS search, fetches full
+article content, and applies relevance scoring. Produces output conforming
+to the 27-column unified schema.
 """
 
 import json
 import time
 from datetime import datetime
 from typing import Optional
+from urllib.parse import quote_plus
 
 import pandas as pd
+import requests
+from bs4 import BeautifulSoup
 
 from scrapers.news_config import (
     NEWS_SOURCES,
@@ -20,7 +24,7 @@ from scrapers.news_config import (
     RSS_RELEVANCE_THRESHOLD,
     BROAD_INJURY_TERMS,
 )
-from scrapers.reddit_config import KEYWORD_WEIGHTS, HYPER_RELEVANCE_THRESHOLD
+from scrapers.reddit_config import TARGET_PLAYERS, KEYWORD_WEIGHTS, HYPER_RELEVANCE_THRESHOLD
 from scrapers.article_fetcher import TRACEArticleFetcher
 from scrapers.relevance_scorer import TRACERelevanceScorer
 from scrapers.checkpoint_manager import TRACECheckpointManager
@@ -410,6 +414,144 @@ class TRACENewsScraperV2:
 
         return all_records
 
+    def scrape_google_news_rss(self, debug_mode: bool = False) -> list[dict]:
+        """
+        Stage 2: Query Google News RSS for each player+injury combination.
+
+        For each of the 15 TARGET_PLAYERS, constructs 3–5 search queries covering
+        different angles of their Achilles injury story, fetches the Google News RSS
+        feed for each query, processes each result through the existing scoring and
+        fetching pipeline, and returns deduplicated records.
+
+        Args:
+            debug_mode: If True, print filtered items with their scores.
+
+        Returns:
+            List of record dicts conforming to the 27-column unified schema.
+        """
+        all_records: list[dict] = []
+
+        print("\n" + "=" * 60)
+        print("📰 STAGE 2: Google News RSS Historical Search")
+        print("=" * 60)
+
+        if debug_mode:
+            print("🔍 DEBUG MODE: Printing all filtered items\n")
+
+        # Google News RSS base URL
+        GOOGLE_NEWS_RSS_BASE = "https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+
+        # Build player-specific queries (4 per player)
+        player_queries: list[tuple[str, str]] = []  # (query, player_name for logging)
+        for player_name in TARGET_PLAYERS.keys():
+            player_queries.append((f'"{player_name}" achilles injury NBA', player_name))
+            player_queries.append((f'"{player_name}" achilles surgery recovery', player_name))
+            player_queries.append((f'"{player_name}" achilles return NBA', player_name))
+            player_queries.append((f'"{player_name}" achilles rehab timeline', player_name))
+
+        # Generic achilles queries (one per year 2015-2024)
+        for year in range(2015, 2025):
+            player_queries.append((f"NBA achilles injury {year}", f"Year {year}"))
+
+        # Non-player-specific Google News queries
+        generic_queries = [
+            "NBA achilles rupture career",
+            "NBA achilles tendon surgery recovery",
+            "NBA achilles injury return timeline",
+            "basketball achilles tear comeback",
+        ]
+
+        # Combine all queries
+        all_queries = player_queries + [(q, "Generic") for q in generic_queries]
+
+        total_queries = len(all_queries)
+        records_collected = 0
+
+        for i, (query, label) in enumerate(all_queries, 1):
+            pct = (i / total_queries) * 100
+            print(f"\n[{i}/{total_queries}] ({pct:.0f}%) Query: {query}")
+
+            # Construct Google News RSS URL
+            encoded_query = quote_plus(query)
+            rss_url = GOOGLE_NEWS_RSS_BASE.format(query=encoded_query)
+
+            try:
+                # Fetch Google News RSS feed
+                headers = {
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/120.0.0.0 Safari/537.36"
+                    ),
+                    "Accept": "application/rss+xml,text/xml,application/xml",
+                }
+                response = requests.get(rss_url, headers=headers, timeout=30)
+                response.raise_for_status()
+
+                # Parse RSS feed with BeautifulSoup (xml parser)
+                soup = BeautifulSoup(response.content, "xml")
+                items = soup.find_all("item")
+
+                if not items:
+                    print(f"   No items found in Google News RSS results")
+                    continue
+
+                print(f"   Found {len(items)} items in RSS feed")
+
+                # Process each item
+                passed = 0
+                for item in items:
+                    title_elem = item.find("title")
+                    link_elem = item.find("link")
+                    pub_date_elem = item.find("pubDate")
+                    source_elem = item.find("source")
+
+                    if not all([title_elem, link_elem]):
+                        continue
+
+                    title = title_elem.get_text(strip=True)
+                    url = link_elem.get_text(strip=True)
+                    pub_date_str = pub_date_elem.get_text(strip=True) if pub_date_elem else ""
+                    source_name = source_elem.get_text(strip=True) if source_elem else "Google News"
+
+                    # Process through existing pipeline
+                    record = self._process_article_url(
+                        title=title,
+                        url=url,
+                        source_name=f"Google News ({source_name})",
+                        pub_date_str=pub_date_str,
+                        description=title,  # Google News RSS doesn't have description
+                        threshold=RSS_RELEVANCE_THRESHOLD,
+                        is_rss_source=True,
+                        debug_mode=debug_mode,
+                    )
+
+                    if record is not None:
+                        all_records.append(record)
+                        passed += 1
+
+                records_collected += passed
+                print(f"   ✅ {passed}/{len(items)} articles passed relevance filter")
+
+                # Checkpoint after each query
+                if passed > 0:
+                    self.checkpoint.save_records_batch(all_records[-passed:])
+
+            except requests.exceptions.Timeout:
+                print(f"   ⚠️  Request timed out (30s)")
+            except requests.exceptions.RequestException as e:
+                print(f"   ⚠️  Network error: {e}")
+            except Exception as e:
+                print(f"   ⚠️  Error parsing Google News RSS: {e}")
+
+            # Rate limiting: sleep between queries
+            time.sleep(NEWS_SCRAPER_SETTINGS["request_delay_seconds"])
+
+        # Print stage summary
+        print(f"\n📊 Stage 2 Summary: {records_collected} total records from Google News RSS")
+
+        return all_records
+
     def _run_gap_filling(self) -> list[dict]:
         """
         Stage 3: Gap-filling pass for underrepresented years.
@@ -457,7 +599,7 @@ class TRACENewsScraperV2:
 
     def run_phase1_collection(self, debug_mode: bool = False) -> pd.DataFrame:
         """
-        Orchestrate full Phase 1 news collection from RSS sources.
+        Orchestrate full Phase 1 news collection from RSS and Google News RSS.
 
         Args:
             debug_mode: If True, print title and score of every filtered RSS item.
@@ -468,7 +610,8 @@ class TRACENewsScraperV2:
         # Stage 1: RSS collection (broad scoring for maximum coverage)
         rss_records = self.scrape_rss_sources_broad(debug_mode=debug_mode)
 
-        # Stage 2: Removed (web search has been deprecated)
+        # Stage 2: Google News RSS historical search
+        gnews_records = self.scrape_google_news_rss(debug_mode=debug_mode)
 
         # Stage 3: Gap-filling analysis (reports thin years, no web searches)
         gap_records = self._run_gap_filling()

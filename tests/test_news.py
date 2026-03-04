@@ -1047,54 +1047,83 @@ def test_rss_source_count() -> bool:
 
 
 # =============================================================================
-# Test 13: No Google News References
+# Test 13: Google News RSS Implementation
 # =============================================================================
 
-def test_no_google_news_references() -> bool:
+def test_google_news_rss_implementation() -> bool:
     """
-    Test 13 — No Google News References
+    Test 13 — Google News RSS Implementation
 
-    Scan the source text of news_scraper_v2.py and news_config.py using open()
-    + string search, and assert that neither file contains the strings "google",
-    "gnews", or "GOOGLE_NEWS_QUERY_TEMPLATE" (case-insensitive).
-    This confirms the removal is clean.
+    Verify that scrape_google_news_rss method exists in news_scraper_v2.py
+    and that the old Google News searcher references are removed.
     """
-    print_test_header(13, "No Google News References")
+    print_test_header(13, "Google News RSS Implementation")
 
     all_passed = True
 
-    # Files to check
-    files_to_check = [
-        "scrapers/news_scraper_v2.py",
-        "scrapers/news_config.py",
-    ]
+    # Check news_scraper_v2.py for new method
+    try:
+        with open("scrapers/news_scraper_v2.py", "r") as f:
+            content = f.read()
 
-    # Strings that should not appear
-    forbidden_strings = ["google", "gnews", "google_news", "GOOGLE_NEWS_QUERY_TEMPLATE"]
-
-    for filepath in files_to_check:
-        try:
-            with open(filepath, "r") as f:
-                content = f.read().lower()
-
-            found_forbidden = []
-            for forbidden in forbidden_strings:
-                if forbidden.lower() in content:
-                    found_forbidden.append(forbidden)
-
-            if found_forbidden:
-                print(f"❌ {filepath}: Contains forbidden strings: {', '.join(found_forbidden)}")
-                all_passed = False
-            else:
-                print(f"✅ {filepath}: No Google News references found")
-
-        except FileNotFoundError:
-            print(f"⚠️  {filepath}: File not found (skipping)")
-        except Exception as e:
-            print(f"❌ {filepath}: Error reading file - {e}")
+        # Verify new method exists
+        if "def scrape_google_news_rss" in content:
+            print("✅ scrape_google_news_rss method exists")
+        else:
+            print("❌ FAIL: scrape_google_news_rss method not found")
             all_passed = False
 
-    record_result(13, "No Google News References", all_passed)
+        # Verify Stage 2 is called in run_phase1_collection
+        if "scrape_google_news_rss(debug_mode" in content:
+            print("✅ Stage 2 Google News RSS is called in run_phase1_collection")
+        else:
+            print("❌ FAIL: Stage 2 Google News RSS not called")
+            all_passed = False
+
+        # Verify old Google News searcher is NOT imported
+        if "from scrapers.google_news_searcher" in content:
+            print("❌ FAIL: Old google_news_searcher import still present")
+            all_passed = False
+        else:
+            print("✅ Old google_news_searcher import removed")
+
+        # Verify TRACEGoogleNewsSearcher is NOT instantiated
+        if "TRACEGoogleNewsSearcher()" in content:
+            print("❌ FAIL: Old TRACEGoogleNewsSearcher instantiation still present")
+            all_passed = False
+        else:
+            print("✅ Old TRACEGoogleNewsSearcher instantiation removed")
+
+    except FileNotFoundError:
+        print("⚠️  scrapers/news_scraper_v2.py: File not found (skipping)")
+    except Exception as e:
+        print(f"❌ scrapers/news_scraper_v2.py: Error reading file - {e}")
+        all_passed = False
+
+    # Check news_config.py has no old Google News template
+    try:
+        with open("scrapers/news_config.py", "r") as f:
+            content = f.read()
+
+        if "GOOGLE_NEWS_QUERY_TEMPLATE" in content:
+            print("❌ FAIL: Old GOOGLE_NEWS_QUERY_TEMPLATE still in news_config.py")
+            all_passed = False
+        else:
+            print("✅ Old GOOGLE_NEWS_QUERY_TEMPLATE removed from news_config.py")
+
+        if "PLAYER_INJURY_WINDOWS" in content:
+            print("❌ FAIL: Old PLAYER_INJURY_WINDOWS still in news_config.py")
+            all_passed = False
+        else:
+            print("✅ Old PLAYER_INJURY_WINDOWS removed from news_config.py")
+
+    except FileNotFoundError:
+        print("⚠️  scrapers/news_config.py: File not found (skipping)")
+    except Exception as e:
+        print(f"❌ scrapers/news_config.py: Error reading file - {e}")
+        all_passed = False
+
+    record_result(13, "Google News RSS Implementation", all_passed)
     return all_passed
 
 
@@ -1286,8 +1315,8 @@ def main() -> None:
     # Test 12: RSS Source Count
     test_rss_source_count()
 
-    # Test 13: No Google News References
-    test_no_google_news_references()
+    # Test 13: Google News RSS Implementation
+    test_google_news_rss_implementation()
 
     # Test 14: Gap Fill Logic
     test_gap_fill_logic()
