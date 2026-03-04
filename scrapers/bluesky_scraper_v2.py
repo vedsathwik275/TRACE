@@ -4,6 +4,17 @@ TRACE Bluesky Scraper V2 - Historical Achilles injury content collection.
 
 Improved scraper with checkpointing, relevance scoring, and multi-phase collection.
 Mirrors the architecture of TRACERedditScraperV2.
+
+This module collects posts from Bluesky via the AT Protocol search API,
+applying relevance scoring and thread extraction to build a comprehensive
+dataset of NBA Achilles injury discussions.
+
+Attributes:
+    BLUESKY_RELEVANCE_THRESHOLD: Minimum relevance score for Bluesky posts (1.0).
+    BROADER_QUERIES: List of broader injury-related search queries for Stage 3.
+    RATE_LIMIT_SEARCH_SECONDS: Delay between search API calls (0.5s).
+    RATE_LIMIT_THREAD_SECONDS: Delay between thread fetch calls (0.3s).
+    MAX_POSTS_PER_QUERY: Maximum posts to retrieve per query via pagination (200).
 """
 
 import json
@@ -53,6 +64,13 @@ class TRACEBlueskyScraperV2:
 
     Implements multi-phase collection with checkpointing, relevance scoring,
     and deduplication. Collects posts via the Bluesky AT Protocol search API.
+
+    Attributes:
+        scorer: TRACERelevanceScorer instance for computing relevance scores.
+        checkpoint: TRACECheckpointManager for saving/loading collection state.
+        seen_uris: Set of post URIs already processed to avoid duplicates.
+        session: Requests session for HTTP calls.
+        access_token: OAuth access token for authenticated API calls.
     """
 
     def __init__(self) -> None:
@@ -72,10 +90,14 @@ class TRACEBlueskyScraperV2:
 
         Args:
             handle: Bluesky handle (e.g., 'user.bsky.social').
-            password: App-specific password.
+            password: App-specific password for the account.
 
         Returns:
             True on successful authentication, False on failure with printed error.
+
+        Raises:
+            requests.exceptions.Timeout: If the login request times out.
+            requests.exceptions.HTTPError: If the API returns an HTTP error status.
         """
         try:
             print(f"🔐 Logging in as {handle}...")
@@ -106,12 +128,16 @@ class TRACEBlueskyScraperV2:
         Search for posts containing the query with cursor-based pagination.
 
         Args:
-            query: Search query string.
+            query: Search query string to find relevant posts.
             limit: Maximum number of posts to retrieve. Defaults to MAX_POSTS_PER_QUERY.
 
         Returns:
             List of raw post dictionaries from the API response.
             Returns empty list on failure.
+
+        Raises:
+            requests.exceptions.Timeout: If the search request times out.
+            requests.exceptions.HTTPError: If the API returns an HTTP error status.
         """
         all_posts: list[dict] = []
         cursor: Optional[str] = None
@@ -166,6 +192,10 @@ class TRACEBlueskyScraperV2:
         Returns:
             Thread dictionary from the API response.
             Returns empty dict on failure.
+
+        Raises:
+            requests.exceptions.Timeout: If the thread request times out.
+            requests.exceptions.HTTPError: If the API returns an HTTP error status.
         """
         try:
             url = "https://bsky.social/xrpc/app.bsky.feed.getPostThread"
@@ -189,6 +219,9 @@ class TRACEBlueskyScraperV2:
     def _process_post(self, post_dict: dict) -> Optional[dict]:
         """
         Process a single Bluesky post into a standardized record.
+
+        Extracts text content, fetches reply threads, computes relevance scores,
+        and builds a record conforming to the 27-column unified schema.
 
         Args:
             post_dict: Raw post dictionary from the search API.
@@ -332,6 +365,7 @@ class TRACEBlueskyScraperV2:
 
         Returns:
             DataFrame of all collected records, deduplicated and sorted.
+            Falls back to loading from checkpoint if no new records collected.
         """
         all_records: list[dict] = []
 

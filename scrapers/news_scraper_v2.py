@@ -35,7 +35,13 @@ class TRACENewsScraperV2:
     Historical news scraper for NBA Achilles injury content.
 
     Collects articles from RSS feeds, fetches full article content, and applies
-    relevance scoring.
+    relevance scoring. Produces output conforming to the 27-column unified schema.
+
+    Attributes:
+        fetcher: TRACEArticleFetcher instance for fetching full article content.
+        scorer: TRACERelevanceScorer instance for computing relevance scores.
+        checkpoint: TRACECheckpointManager for saving/loading collection state.
+        seen_urls: Set of article URLs already processed to avoid duplicates.
     """
 
     def __init__(self) -> None:
@@ -76,7 +82,8 @@ class TRACENewsScraperV2:
             keywords: List of matched keyword strings.
 
         Returns:
-            Complete record dictionary with all 27 columns.
+            Complete record dictionary with all 27 columns, including computed
+            fields like recovery_phase, mentioned_players, and engagement metrics.
         """
         # Combine title and body for analysis
         combined_text = f"{title} {body_text}"
@@ -149,7 +156,7 @@ class TRACENewsScraperV2:
             source_name: Human-readable source name.
             pub_date_str: Raw publication date string from RSS feed.
             description: Optional description/summary text from RSS item.
-            threshold: Relevance threshold to apply (default: HYPER_RELEVANCE_THRESHOLD).
+            threshold: Relevance threshold to apply (default: RSS_RELEVANCE_THRESHOLD).
             is_rss_source: If True, use RSS-specific scoring before full fetch.
             debug_mode: If True, print filtered items with their scores.
 
@@ -235,11 +242,15 @@ class TRACENewsScraperV2:
         """
         Scrape all configured RSS sources.
 
+        Iterates through NEWS_SOURCES, fetches RSS feeds, and processes each
+        article through the relevance scoring pipeline.
+
         Args:
             debug_mode: If True, print title and score of every filtered item.
 
         Returns:
             List of record dictionaries for articles passing relevance filter.
+            Returns empty list if no sources are configured or all fail.
         """
         all_records: list[dict] = []
 
@@ -328,6 +339,7 @@ class TRACENewsScraperV2:
 
         Returns:
             List of record dictionaries for articles passing relevance filter.
+            Returns empty list if no sources are configured or all fail.
         """
         all_records: list[dict] = []
 
@@ -431,6 +443,11 @@ class TRACENewsScraperV2:
 
         Returns:
             List of record dicts conforming to the 27-column unified schema.
+            Returns empty list if all requests fail or no items pass filtering.
+
+        Raises:
+            requests.exceptions.Timeout: If a request exceeds 30 second timeout.
+            requests.exceptions.RequestException: For network-related errors.
         """
         all_records: list[dict] = []
 
@@ -562,9 +579,11 @@ class TRACENewsScraperV2:
 
     def _run_gap_filling(self) -> list[dict]:
         """
-        Stage 3: Gap-filling pass for underrepresented years.
+        Stage 3: Gap-filling analysis for underrepresented years.
 
-        Reports which years have thin coverage. Does not perform any web searches.
+        Analyzes current checkpointed records to identify years (2015-2024)
+        with fewer than 100 records. Reports underrepresented years but does
+        not perform any web searches.
 
         Returns:
             Empty list (gap-filling via web search has been removed).
@@ -609,11 +628,17 @@ class TRACENewsScraperV2:
         """
         Orchestrate full Phase 1 news collection from RSS and Google News RSS.
 
+        Executes three stages:
+        1. RSS feed collection with broad scoring
+        2. Google News RSS historical search for player-specific queries
+        3. Gap-filling analysis (reports thin years, no web searches)
+
         Args:
             debug_mode: If True, print title and score of every filtered RSS item.
 
         Returns:
             DataFrame of all collected records, deduplicated and sorted.
+            Returns empty DataFrame if no records were collected.
         """
         # Stage 1: RSS collection (broad scoring for maximum coverage)
         rss_records = self.scrape_rss_sources_broad(debug_mode=debug_mode)

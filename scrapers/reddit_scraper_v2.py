@@ -3,6 +3,20 @@
 TRACE Reddit Scraper V2 - Historical Achilles injury content collection.
 
 Improved scraper with checkpointing, relevance scoring, and multi-phase collection.
+
+This module collects posts from NBA-related subreddits using the PRAW library,
+applying relevance scoring and comment extraction to build a comprehensive
+dataset of NBA Achilles injury discussions.
+
+Attributes:
+    TARGET_PLAYERS: Dictionary mapping player names to their teams.
+    ACHILLES_SEARCH_QUERIES: List of Achilles-specific search queries.
+    SUBREDDITS_PRIMARY: List of primary NBA discussion subreddits.
+    SUBREDDITS_TEAM: Dictionary mapping team names to their subreddits.
+    SUBREDDITS_SPECIALTY: List of specialty subreddits for focused discussions.
+    DATE_RANGES: List of (start_date, end_date) tuples for historical searches.
+    HYPER_RELEVANCE_THRESHOLD: Minimum relevance score for posts.
+    SCRAPER_SETTINGS: Configuration for rate limiting and collection limits.
 """
 
 import json
@@ -35,6 +49,12 @@ class TRACERedditScraperV2:
     Implements multi-phase collection with checkpointing, relevance scoring,
     and deduplication. Collects posts from NBA team subreddits, primary
     discussion subreddits, and specialty subreddits.
+
+    Attributes:
+        reddit: PRAW Reddit instance for API access.
+        scorer: TRACERelevanceScorer instance for computing relevance scores.
+        checkpoint: TRACECheckpointManager for saving/loading collection state.
+        seen_urls: Set of post URLs already processed to avoid duplicates.
     """
 
     def __init__(self) -> None:
@@ -51,11 +71,14 @@ class TRACERedditScraperV2:
         Set up PRAW Reddit connection with read-only OAuth.
 
         Args:
-            client_id: Reddit API client ID.
-            client_secret: Reddit API client secret.
+            client_id: Reddit API client ID from Reddit preferences.
+            client_secret: Reddit API client secret from Reddit preferences.
 
         Returns:
             True on successful connection, False on failure with printed error.
+
+        Raises:
+            Exception: If PRAW fails to authenticate or connect to Reddit.
         """
         try:
             print(f"🔐 Setting up Reddit connection (TRACE Research)...")
@@ -80,8 +103,11 @@ class TRACERedditScraperV2:
         """
         Process a single PRAW submission into a standardized record.
 
+        Extracts post content, fetches comments, computes relevance scores,
+        and builds a record conforming to the 27-column unified schema.
+
         Args:
-            submission: PRAW submission object.
+            submission: PRAW submission object from the Reddit API.
             subreddit_name: Name of the subreddit the submission came from.
 
         Returns:
@@ -209,14 +235,21 @@ class TRACERedditScraperV2:
         """
         Search a subreddit for a query within a date range.
 
+        Uses PRAW's search API to find posts matching the query, filters by
+        date range, and processes matching posts through the relevance scorer.
+
         Args:
-            subreddit_name: The subreddit to search.
+            subreddit_name: The subreddit to search (without 'r/' prefix).
             query: The search query string.
             start_date: Start date in YYYY-MM-DD format.
             end_date: End date in YYYY-MM-DD format.
 
         Returns:
             List of record dictionaries for posts matching the criteria.
+            Returns empty list if query was already completed (from checkpoint).
+
+        Raises:
+            Exception: If the Reddit API returns an error during search.
         """
         # Generate query key and check checkpoint
         query_key = generate_query_key(subreddit_name, query, (start_date, end_date))
@@ -266,8 +299,13 @@ class TRACERedditScraperV2:
         """
         Orchestrate full Phase 1 collection across three stages.
 
+        Stage 1: Player-specific historical searches in primary subreddits.
+        Stage 2: Achilles-specific queries across all subreddits (primary, team, specialty).
+        Stage 3: Current hot and top post sweep for recent content.
+
         Returns:
             DataFrame of all collected records, deduplicated and sorted.
+            Falls back to loading from checkpoint if no new records collected.
         """
         all_records: list[dict] = []
 
