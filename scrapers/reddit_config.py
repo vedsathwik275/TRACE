@@ -121,6 +121,7 @@ SUBREDDITS_SPECIALTY: list[str] = [
 # =============================================================================
 
 KEYWORD_WEIGHTS: dict[str, dict[str, float | list[str]]] = {
+    # High-weight Achilles-specific phrases (10.0 points each)
     "achilles_terms": {
         "weight": 10.0,
         "terms": [
@@ -137,6 +138,15 @@ KEYWORD_WEIGHTS: dict[str, dict[str, float | list[str]]] = {
             "achilles tendinopathy",
         ],
     },
+    # Single "achilles" word for headlines (5.0 points)
+    "achilles_single": {
+        "weight": 5.0,
+        "terms": [
+            "achilles",
+            "achilles injury",
+        ],
+    },
+    # Lower leg injury phrases (3.0 points)
     "lower_leg_terms": {
         "weight": 3.0,
         "terms": [
@@ -148,6 +158,17 @@ KEYWORD_WEIGHTS: dict[str, dict[str, float | list[str]]] = {
             "gastrocnemius",
         ],
     },
+    # Single lower leg words (2.0 points)
+    "lower_leg_single": {
+        "weight": 2.0,
+        "terms": [
+            "calf",
+            "ankle",
+            "foot",
+            "lower leg",
+        ],
+    },
+    # Recovery phase terms (2.0 points)
     "recovery_terms": {
         "weight": 2.0,
         "terms": [
@@ -165,6 +186,21 @@ KEYWORD_WEIGHTS: dict[str, dict[str, float | list[str]]] = {
             "behind schedule",
         ],
     },
+    # General injury terms for RSS headlines (2.0 points)
+    "injury_general": {
+        "weight": 2.0,
+        "terms": [
+            "injury",
+            "injured",
+            "out",
+            "sidelined",
+            "day-to-day",
+            "DTD",
+            "DNP",
+            "inactive",
+        ],
+    },
+    # Medical/professional terms (2.0 points)
     "medical_terms": {
         "weight": 2.0,
         "terms": [

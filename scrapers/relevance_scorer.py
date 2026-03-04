@@ -70,6 +70,14 @@ class TRACERelevanceScorer:
                 total_score += 5.0
                 matched_players.add(full_name)
 
+        # Bonus: Player + injury combination (catches headlines like "Durant injury update")
+        injury_words = {"injury", "injured", "out", "hurt", "sidelined", "achilles", "calf", "ankle", "foot", "tendon"}
+        has_injury_word = any(word in combined_text for word in injury_words)
+        has_player = len(matched_players) > 0
+        
+        if has_player and has_injury_word:
+            total_score += 3.0  # Bonus for player + injury combo
+
         return total_score, matched_keywords
 
     def is_hyper_relevant(self, title: str, body: str) -> bool:
