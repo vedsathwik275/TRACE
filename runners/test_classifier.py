@@ -1,11 +1,15 @@
 import pandas as pd
 from gemini_classifier import classify_record
+from text_sanitizer import sanitize_dataframe
 import json
 
 # Load the dataset
 print("Loading sentiment_results.csv...")
 df = pd.read_csv('data/sentiment_results.csv')
 print(f"Loaded {len(df)} rows\n")
+
+# Sanitize text content
+df = sanitize_dataframe(df)
 
 # Select 5 sample rows
 # Using a mix: some that are achilles_related=True and some False

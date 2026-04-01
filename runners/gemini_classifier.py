@@ -5,6 +5,7 @@ import pandas as pd
 import google.generativeai as genai
 import os
 from dotenv import load_dotenv
+from text_sanitizer import sanitize_text
 
 # Configure Gemini API with API key from .env
 load_dotenv()
@@ -54,7 +55,7 @@ def classify_record(row: pd.Series, max_retries: int = 3) -> Dict[str, Any]:
     """
     # Extract required fields from the row
     fields = {
-        'text_content': str(row.get('text_content', ''))[:500],
+        'text_content': sanitize_text(row.get('text_content', '')),
         'source_platform': row.get('source_platform', ''),
         'recovery_phase': row.get('recovery_phase', ''),
         'mentioned_players': row.get('mentioned_players', ''),
