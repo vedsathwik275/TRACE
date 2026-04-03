@@ -4,7 +4,6 @@ Supports resumable processing with checkpointing and stratified sampling.
 """
 
 import pandas as pd
-import numpy as np
 import argparse
 import time
 from datetime import datetime

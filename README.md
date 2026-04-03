@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-A multi-source NBA injury sentiment analysis pipeline that collects data from Reddit, Bluesky, and sports news outlets, performs NLP sentiment analysis using FinBERT, and stores results in Supabase.
+A multi-source NBA injury sentiment analysis pipeline that collects data from Reddit, Bluesky, and sports news outlets, performs NLP sentiment analysis using FinBERT, and applies LLM-based content classification to identify suitable research content for Achilles injury recovery narratives.
 
 ---
 
@@ -22,7 +22,8 @@ The project now includes **V2 scrapers** for Reddit, News, and Bluesky — purpo
 - Aggregates all sources into a unified schema
 - Uploads data to Supabase PostgreSQL
 - Runs FinBERT sentiment classification on all text content
-- Stores and visualizes sentiment results
+- Applies Gemini 2.5 Flash LLM classification to identify SUITABLE vs UNSUITABLE posts for research
+- Stores and visualizes sentiment and classification results
 
 ---
 
@@ -56,6 +57,17 @@ The project now includes **V2 scrapers** for Reddit, News, and Bluesky — purpo
 │                     SENTIMENT ANALYSIS                              │
 │                                                                     │
 │  model_runner.py (FinBERT) ──► Supabase: trace_sentiment_results   │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                   LLM CONTENT CLASSIFICATION                        │
+│                                                                     │
+│  batch_runner.py (Gemini 2.5 Flash) ──► CSV: llm_classifications   │
+│  • Text sanitization & validation                                  │
+│  • SUITABLE / UNSUITABLE classification                            │
+│  • Confidence scoring & reasoning                                  │
+│  • Recovery phase refinement                                       │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -75,6 +87,10 @@ The project now includes **V2 scrapers** for Reddit, News, and Bluesky — purpo
 - **Achilles-specific analytics** — Dedicated flag and recovery phase classifier for Achilles tendon injury content
 - **Engagement metrics** — Captures upvotes, comments, likes, reposts, and engagement tier
 - **FinBERT sentiment analysis** — Positive / Negative / Neutral classification with confidence scores
+- **LLM content classification** — Gemini 2.5 Flash powered SUITABLE/UNSUITABLE classification for research content
+- **Text sanitization** — Comprehensive cleaning pipeline removing problematic characters and formatting for reliable LLM processing
+- **Batch processing with checkpointing** — Resumable LLM classification with automatic progress saving
+- **Stratified sampling** — Platform-balanced sampling for efficient pilot testing and representative analysis
 - **Supabase integration** — Cloud PostgreSQL storage with batch upload and fallback handling
 - **Full-text article extraction** — Fetches article bodies via newspaper3k for deep content
 - **V2 validation scripts** — 10-check QA suite for each V2 scraper output
@@ -112,6 +128,11 @@ TRACE/
 │   ├── su_run.py                   # Upload unified data to Supabase
 │   ├── data_aggregator.py          # Merge all source CSVs into one
 │   ├── model_runner.py             # FinBERT inference + results upload
+│   ├── text_sanitizer.py           # Text cleaning utilities for LLM processing
+│   ├── gemini_classifier.py        # Gemini 2.5 Flash classification core logic
+│   ├── test_classifier.py          # Test script for Gemini classifier (5 samples)
+│   ├── pilot_runner.py             # Pilot classification run (100 stratified samples)
+│   ├── batch_runner.py             # Production batch classifier with checkpointing
 │   ├── validate_reddit_v2.py       # 10-check QA validation for Reddit V2 output
 │   ├── validate_news_v2.py         # 10-check QA validation for News V2 output
 │   └── validate_bluesky_v2.py      # 10-check QA validation for Bluesky V2 output
@@ -168,6 +189,7 @@ Create a `.env` file in the project root with the following variables:
 | `BLUESKY_APP_PASSWORD` | Bluesky app-specific password | [bsky.app/settings/app-passwords](https://bsky.app/settings/app-passwords) |
 | `SUPABASE_URL` | Supabase project URL | Supabase project settings |
 | `SUPABASE_KEY` | Supabase API key (anon or service role) | Supabase project settings |
+| `GEMINI_API_KEY` | Google Gemini API key for LLM classification | [Google AI Studio](https://aistudio.google.com/app/apikey) |
 
 **Example `.env`:**
 ```
@@ -177,6 +199,7 @@ BLUESKY_HANDLE=yourhandle.bsky.social
 BLUESKY_APP_PASSWORD=your-app-password
 SUPABASE_URL=https://yourproject.supabase.co
 SUPABASE_KEY=your_supabase_key
+GEMINI_API_KEY=your_gemini_api_key_here
 ```
 
 ---
@@ -233,6 +256,48 @@ python runners/su_run.py
 python runners/model_runner.py
 ```
 
+### LLM Content Classification
+
+After sentiment analysis, use Gemini 2.5 Flash to classify posts as SUITABLE or UNSUITABLE for Achilles injury recovery research:
+
+**Quick test (5 samples):**
+```bash
+python runners/test_classifier.py
+```
+
+**Pilot run (100 stratified samples):**
+```bash
+python runners/pilot_runner.py
+# Output: data/pilot_results.csv
+# Provides comprehensive statistics across platforms and content types
+```
+
+**Production batch processing:**
+```bash
+# Process 10% stratified sample (default)
+python runners/batch_runner.py
+# Output: data/llm_classifications_sample.csv
+
+# Process full dataset
+python runners/batch_runner.py --full
+# Output: data/llm_classifications_full.csv
+```
+
+**Batch runner features:**
+- **Checkpointing** — Automatically resumes from last saved batch if interrupted
+- **Stratified sampling** — Balanced sampling across Reddit, News, and Bluesky platforms
+- **Memory efficient** — Processes in batches of 50, appending results to CSV after each batch
+- **Progress tracking** — Real-time counts of SUITABLE/UNSUITABLE/ERROR classifications
+- **Text sanitization** — Automatic cleaning of problematic characters to prevent JSON parsing errors
+
+The batch runner outputs detailed statistics including:
+- Total processed, success rate, error rate
+- SUITABLE vs UNSUITABLE breakdown with percentages
+- Average confidence scores
+- Platform-wise SUITABLE rates
+- SUITABLE rates for achilles_related=True vs False content
+- Processing time and throughput
+
 **Validate the full pipeline:**
 ```bash
 python tests/test_bench.py
@@ -252,6 +317,9 @@ Each runner writes timestamped CSV files to the `data/` directory:
 | `bs_run_v2.py` | `data/trace_bluesky_v2_data_YYYYMMDD_HHMMSS.csv` |
 | `gn_run.py` | `data/trace_news_gnews_YYYYMMDD_HHMMSS.csv` |
 | `data_aggregator.py` | `data/trace_unified_data_YYYYMMDD_HHMMSS.csv` |
+| `test_classifier.py` | `data/classifier_test_results.json` |
+| `pilot_runner.py` | `data/pilot_results.csv` |
+| `batch_runner.py` | `data/llm_classifications_sample.csv` or `data/llm_classifications_full.csv` |
 
 V2 scrapers also write checkpoint files to `data/checkpoints/`, `data/news_checkpoints/`, and `data/bluesky_checkpoints/` for resumability.
 
@@ -372,6 +440,133 @@ Stores FinBERT model output, linked to source data:
 
 ---
 
+## LLM Content Classification
+
+### Overview
+
+After FinBERT sentiment analysis, TRACE applies an LLM-powered classification layer using **Gemini 2.5 Flash** to identify posts that are SUITABLE vs UNSUITABLE for Achilles injury recovery research. This step filters out noise, off-topic content, and low-quality posts to create a curated dataset of high-value recovery narratives.
+
+### Classification Criteria
+
+**SUITABLE posts include:**
+- Personal recovery experiences and timelines
+- Detailed injury descriptions and rehabilitation progress
+- Medical updates or treatment discussions
+- Player comeback stories and performance analysis
+- Community discussions about recovery expectations
+- Comparative analysis of different recovery trajectories
+
+**UNSUITABLE posts include:**
+- Generic injury news without recovery context
+- Trade rumors or contract discussions
+- Off-topic sports commentary
+- Duplicate or spam content
+- Low-quality or uninformative posts
+- Posts primarily about other injuries
+
+### Text Sanitization Pipeline
+
+Before LLM processing, all text content passes through `text_sanitizer.py` with these steps:
+
+1. **UTF-8 encoding normalization** — Strip invalid unicode
+2. **Whitespace normalization** — Replace newlines, tabs, carriage returns with spaces
+3. **Character replacement** — Convert quotes, backslashes, braces to safer alternatives
+4. **Control character removal** — Remove null bytes and characters with `ord < 32`
+5. **Deduplication** — Collapse multiple consecutive spaces
+6. **Truncation** — Limit to 500 characters for efficient LLM processing
+
+This pipeline prevents JSON parsing errors and ensures reliable classification results.
+
+### Classification Workflow
+
+1. **Load sentiment results** from Supabase or CSV
+2. **Sanitize text content** using the cleaning pipeline
+3. **Sample or process full dataset** (stratified across platforms if sampling)
+4. **Classify each record** with Gemini 2.5 Flash via `gemini_classifier.py`:
+   - Send: `text_content`, `source_platform`, `recovery_phase`, `mentioned_players`, `is_achilles_related`, `engagement_score`, `created_date`
+   - Receive: JSON response with `classification`, `confidence`, `reasoning`, `recovery_phase`, `key_entities`
+5. **Checkpoint progress** after each batch of 50 records
+6. **Output results** to CSV with full classification metadata
+
+### Output Schema
+
+Classification results are saved to CSV with these columns:
+
+| Column | Type | Description |
+|---|---|---|
+| `row_index` | INT | Original row index from sentiment_results |
+| `source_platform` | TEXT | Reddit, News, or Bluesky |
+| `is_achilles_related` | BOOL | Original Achilles detection flag |
+| `text_preview` | TEXT | First 80 characters of sanitized text |
+| `classification` | TEXT | `SUITABLE`, `UNSUITABLE`, or `ERROR` |
+| `confidence` | FLOAT | Model confidence score (0.0–1.0) |
+| `reasoning` | TEXT | LLM explanation of classification decision |
+| `recovery_phase` | TEXT | Refined recovery phase classification |
+| `key_entities` | TEXT | Comma-separated list of detected players, teams, concepts |
+| `error` | TEXT | Error message if classification failed |
+| `processed_at` | TIMESTAMP | ISO 8601 timestamp of processing |
+
+### Classification Modules
+
+**`text_sanitizer.py`** — Text cleaning utilities
+- `sanitize_text(text)` — Clean individual text strings
+- `sanitize_dataframe(df, column='text_content')` — Batch clean entire columns with statistics
+
+**`gemini_classifier.py`** — Core classification logic
+- `classify_record(row)` — Classify a single pandas Series
+- Uses Gemini 2.5 Flash with system instructions for consistent classification
+- Includes retry logic (3 attempts) with exponential backoff
+- Returns structured JSON with classification, confidence, reasoning, phase, entities
+
+**`test_classifier.py`** — Quick validation script
+- Tests classifier on 5 diverse samples
+- Validates API connectivity and output format
+- Useful for debugging and development
+
+**`pilot_runner.py`** — Statistical pilot run
+- Processes 100 stratified samples (balanced across platforms)
+- Generates comprehensive statistics and breakdowns
+- Output: `data/pilot_results.csv`
+
+**`batch_runner.py`** — Production-ready batch processor
+- **Checkpointing** — Reads existing output CSV and skips already-processed rows
+- **Sampling modes** — Default 10% stratified sample or `--full` for entire dataset
+- **Memory efficient** — Processes in batches of 50, appends to CSV immediately
+- **Progress tracking** — Real-time counts and elapsed time after each batch
+- **Resumable** — Can be safely interrupted and restarted
+- Output: `data/llm_classifications_sample.csv` or `data/llm_classifications_full.csv`
+
+### Performance and Cost Considerations
+
+- **Gemini 2.5 Flash** — Fast, cost-effective model optimized for classification tasks
+- **Rate limiting** — 0.5 second delay between API calls to respect quotas
+- **Batch checkpointing** — Prevents data loss and allows resumption after interruptions
+- **Stratified sampling** — Test on 10% representative sample before full-dataset runs
+- **Text truncation** — 500 character limit reduces token usage while preserving context
+
+### Example Statistics
+
+Typical pilot run (100 samples) output:
+```
+Total processed: 100
+  SUITABLE: 45 (45.0%)
+  UNSUITABLE: 53 (53.0%)
+  ERROR: 2 (2.0%)
+
+Average Confidence: 0.847
+
+SUITABLE Rate by Platform:
+  Reddit: 24/48 (50.0%)
+  News: 14/32 (43.8%)
+  Bluesky: 7/20 (35.0%)
+
+SUITABLE Rate by is_achilles_related:
+  is_achilles_related=True: 38/60 (63.3%)
+  is_achilles_related=False: 7/40 (17.5%)
+```
+
+---
+
 ## Testing
 
 Run the full integration test suite with:
@@ -422,5 +617,6 @@ See [`requirements.txt`](./requirements.txt) for exact versions. Key libraries:
 | `atproto` | Bluesky / AT Protocol client |
 | `supabase` | Supabase PostgreSQL client |
 | `transformers`, `torch` | FinBERT model inference |
+| `google-generativeai` | Gemini 2.5 Flash LLM classification |
 | `python-dotenv` | Environment variable loading |
 | `matplotlib`, `seaborn` | Visualization and analytics plots |
