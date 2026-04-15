@@ -31,3 +31,5 @@ seaborn>=0.12.0
 
 # Gemini API
 google-generativeai>=0.3.0
+
+firecrawl-py
